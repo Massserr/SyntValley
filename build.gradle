@@ -1,0 +1,181 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.141'
+    id 'idea'
+}
+
+tasks.named('wrapper', Wrapper).configure {
+    distributionType = Wrapper.DistributionType.BIN
+}
+
+version = mod_version
+group = mod_group_id
+
+base {
+    archivesName = mod_id
+}
+
+sourceSets.main.resources {
+    srcDir('src/generated/resources')
+    exclude('**/*.bbmodel')
+    exclude('src/generated/**/.cache')
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    withSourcesJar()
+}
+
+neoForge {
+    version = project.neo_version
+
+    parchment {
+        mappingsVersion = project.parchment_mappings_version
+        minecraftVersion = project.parchment_minecraft_version
+    }
+
+    runs {
+        client {
+            client()
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+        }
+
+        server {
+            server()
+            programArgument '--nogui'
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+        }
+
+        gameTestServer {
+            type = 'gameTestServer'
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+        }
+
+        data {
+            data()
+            programArguments.addAll(
+                    '--mod', project.mod_id,
+                    '--all',
+                    '--output', file('src/generated/resources/').absolutePath,
+                    '--existing', file('src/main/resources/').absolutePath
+            )
+        }
+
+        configureEach {
+            systemProperty 'forge.logging.markers', 'REGISTRIES'
+            logLevel = org.slf4j.event.Level.INFO
+        }
+    }
+
+    mods {
+        "${mod_id}" {
+            sourceSet(sourceSets.main)
+        }
+    }
+
+    unitTest {
+        enable()
+        testedMod = mods."${mod_id}"
+    }
+}
+
+configurations {
+    runtimeClasspath.extendsFrom localRuntime
+}
+
+dependencies {
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+def metadataProperties = [
+        minecraft_version      : minecraft_version,
+        minecraft_version_range: minecraft_version_range,
+        neo_version            : neo_version,
+        loader_version_range   : loader_version_range,
+        mod_id                 : mod_id,
+        mod_name               : mod_name,
+        mod_license            : mod_license,
+        mod_version            : mod_version,
+        mod_authors            : mod_authors,
+        mod_description        : mod_description,
+]
+
+def generateModMetadata = tasks.register('generateModMetadata', ProcessResources) {
+    inputs.properties(metadataProperties)
+    expand(metadataProperties)
+    from 'src/main/templates'
+    into layout.buildDirectory.dir('generated/sources/modMetadata')
+}
+
+sourceSets.main.resources.srcDir(generateModMetadata)
+neoForge.ideSyncTask(generateModMetadata)
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+}
+
+def verifyJava21 = tasks.register('verifyJava21') {
+    group = 'verification'
+    description = 'Fails unless Gradle itself and the compiler toolchain use Java 21.'
+
+    doLast {
+        if (JavaVersion.current() != JavaVersion.VERSION_21) {
+            throw new GradleException("Gradle must run on Java 21, but is running on ${System.getProperty('java.version')} from ${System.getProperty('java.home')}")
+        }
+
+        logger.lifecycle("Verified Java 21: runtime={} home={}",
+                System.getProperty('java.version'),
+                System.getProperty('java.home'))
+    }
+}
+
+def syntValleyJavaSources = fileTree('src/main/java/dev/syntvalley') {
+    include '**/*.java'
+}
+
+def verifyArchitectureBoundaries = tasks.register('verifyArchitectureBoundaries') {
+    group = 'verification'
+    description = 'Checks the initial package dependency boundaries without adding a runtime dependency.'
+    inputs.files(syntValleyJavaSources)
+
+    doLast {
+        def violations = []
+        inputs.files.files.each { sourceFile ->
+            def relativePath = sourceFile.toPath().toString().replace('\\', '/')
+            def source = sourceFile.getText('UTF-8')
+
+            if (!relativePath.contains('/client/') && source.contains('import net.minecraft.client.')) {
+                violations << "Client import outside client package: ${relativePath}"
+            }
+
+            if (relativePath.contains('/domain/') &&
+                    (source.contains('import net.minecraft.') || source.contains('import net.neoforged.'))) {
+                violations << "Minecraft/NeoForge import inside domain package: ${relativePath}"
+            }
+        }
+
+        if (!violations.isEmpty()) {
+            throw new GradleException("Architecture boundary violations:\n - ${violations.join('\n - ')}")
+        }
+    }
+}
+
+tasks.named('check').configure {
+    dependsOn(verifyJava21, verifyArchitectureBoundaries)
+}
+
+idea {
+    module {
+        downloadSources = true
+        downloadJavadoc = true
+    }
+}

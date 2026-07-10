@@ -1,0 +1,40 @@
+### Gradle ###
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/**/build/
+
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+.run/
+
+### Eclipse ###
+.apt_generated/
+.classpath
+.eclipse/
+.factorypath
+.project
+.settings/
+bin/
+
+### VS Code ###
+.vscode/
+
+### Minecraft development ###
+run/
+run-*/
+logs/
+crash-reports/
+repo/
+src/generated/resources/.cache/
+
+### Operating systems ###
+.DS_Store
+Thumbs.db
+
+### Local reference/download directories ###
+.mdk-reference/
