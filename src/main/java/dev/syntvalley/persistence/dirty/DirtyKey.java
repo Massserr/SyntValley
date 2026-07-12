@@ -1,15 +1,22 @@
 package dev.syntvalley.persistence.dirty;
 
+import dev.syntvalley.domain.identity.CitizenId;
 import dev.syntvalley.domain.identity.VillageId;
 import java.util.Objects;
+import java.util.UUID;
 
-public record DirtyKey(DirtyKind kind, VillageId villageId) {
+/** Opaque bookkeeping key. {@link DirtyKind} disambiguates identifiers that share the UUID space. */
+public record DirtyKey(DirtyKind kind, UUID id) {
     public DirtyKey {
         Objects.requireNonNull(kind, "kind");
-        Objects.requireNonNull(villageId, "villageId");
+        Objects.requireNonNull(id, "id");
     }
 
     public static DirtyKey village(VillageId villageId) {
-        return new DirtyKey(DirtyKind.VILLAGE, villageId);
+        return new DirtyKey(DirtyKind.VILLAGE, Objects.requireNonNull(villageId, "villageId").value());
+    }
+
+    public static DirtyKey citizen(CitizenId citizenId) {
+        return new DirtyKey(DirtyKind.CITIZEN, Objects.requireNonNull(citizenId, "citizenId").value());
     }
 }

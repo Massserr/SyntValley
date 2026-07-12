@@ -1,8 +1,14 @@
 package dev.syntvalley.bootstrap;
 
+import dev.syntvalley.application.port.CitizenStateRepository;
 import dev.syntvalley.application.port.VillageStateRepository;
+import dev.syntvalley.application.service.CitizenApplicationService;
+import dev.syntvalley.application.service.CitizenBindingService;
 import dev.syntvalley.application.service.CoreBindingService;
 import dev.syntvalley.application.service.VillageApplicationService;
+import dev.syntvalley.domain.citizen.CitizenAggregate;
+import dev.syntvalley.domain.citizen.CitizenEntityBinding;
+import dev.syntvalley.domain.identity.CitizenId;
 import dev.syntvalley.domain.identity.VillageId;
 import dev.syntvalley.domain.village.CoreBinding;
 import dev.syntvalley.domain.village.CoreLocation;
@@ -10,10 +16,12 @@ import dev.syntvalley.domain.village.VillageAggregate;
 import dev.syntvalley.persistence.dirty.DirtyTracker;
 import dev.syntvalley.persistence.dirty.PersistenceCoordinator;
 import dev.syntvalley.persistence.saveddata.PersistenceBounds;
+import dev.syntvalley.persistence.saveddata.SavedDataCitizenRepository;
 import dev.syntvalley.persistence.saveddata.SavedDataVillageRepository;
 import dev.syntvalley.persistence.saveddata.SyntValleySavedData;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import net.minecraft.server.MinecraftServer;
 
 /** Per-MinecraftServer composition root. Canonical gameplay state remains in SavedData. */
@@ -21,17 +29,23 @@ public final class SyntValleyServerRuntime {
     private final MinecraftServer server;
     private final SyntValleySavedData savedData;
     private final VillageStateRepository villageRepository;
+    private final CitizenStateRepository citizenRepository;
     private final CoreBindingService coreBindingService;
+    private final CitizenApplicationService citizenService;
+    private final CitizenBindingService citizenBindingService;
     private final PersistenceCoordinator persistenceCoordinator;
     private boolean acceptingCommands = true;
 
     public SyntValleyServerRuntime(MinecraftServer server) {
         this.server = Objects.requireNonNull(server, "server");
         this.savedData = SyntValleySavedData.get(server);
-        DirtyTracker dirtyTracker = new DirtyTracker(PersistenceBounds.MAX_VILLAGES, savedData::setDirty);
+        DirtyTracker dirtyTracker = new DirtyTracker(PersistenceBounds.MAX_DIRTY_KEYS, savedData::setDirty);
         this.villageRepository = new SavedDataVillageRepository(server, savedData, dirtyTracker);
         VillageApplicationService villageService = new VillageApplicationService(villageRepository, VillageId::random);
         this.coreBindingService = new CoreBindingService(villageRepository, villageService);
+        this.citizenRepository = new SavedDataCitizenRepository(server, savedData, dirtyTracker);
+        this.citizenService = new CitizenApplicationService(citizenRepository, villageRepository, CitizenId::random);
+        this.citizenBindingService = new CitizenBindingService(citizenRepository);
         this.persistenceCoordinator = new PersistenceCoordinator(savedData, dirtyTracker);
     }
 
@@ -75,6 +89,46 @@ public final class SyntValleyServerRuntime {
     public int villageCount() {
         assertServerThread();
         return villageRepository.villageCount();
+    }
+
+    public CitizenApplicationService.HireResult hireCitizen(VillageId villageId, String requestedName, long gameTime) {
+        assertServerThread();
+        if (!acceptingCommands) {
+            return new CitizenApplicationService.HireResult.Rejected(
+                    CitizenApplicationService.HireRejection.RUNTIME_STOPPING
+            );
+        }
+        return citizenService.hire(villageId, requestedName, gameTime);
+    }
+
+    public CitizenBindingService.EnsureCitizenResult ensureCitizenBound(CitizenEntityBinding binding, UUID entityId) {
+        assertServerThread();
+        if (!acceptingCommands) {
+            return new CitizenBindingService.EnsureCitizenResult.Rejected(
+                    CitizenBindingService.CitizenBindingRejection.RUNTIME_STOPPING
+            );
+        }
+        return citizenBindingService.ensureBound(binding, entityId);
+    }
+
+    public CitizenBindingService.DeathResult recordCitizenDeath(CitizenEntityBinding binding, UUID entityId) {
+        assertServerThread();
+        if (!acceptingCommands) {
+            return new CitizenBindingService.DeathResult.Rejected(
+                    CitizenBindingService.CitizenBindingRejection.RUNTIME_STOPPING
+            );
+        }
+        return citizenBindingService.recordDeath(binding, entityId);
+    }
+
+    public Optional<CitizenAggregate> inspectCitizen(CitizenId citizenId) {
+        assertServerThread();
+        return citizenService.inspect(citizenId);
+    }
+
+    public int citizenCount() {
+        assertServerThread();
+        return citizenRepository.citizenCount();
     }
 
     public void onServerTick(long gameTime) {

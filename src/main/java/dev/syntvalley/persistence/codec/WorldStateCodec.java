@@ -1,10 +1,14 @@
 package dev.syntvalley.persistence.codec;
 
+import dev.syntvalley.domain.citizen.CitizenConstraints;
+import dev.syntvalley.domain.citizen.CitizenLifecycle;
+import dev.syntvalley.domain.identity.CitizenId;
 import dev.syntvalley.domain.identity.VillageId;
 import dev.syntvalley.domain.village.CoreLocation;
 import dev.syntvalley.domain.village.VillageConstraints;
 import dev.syntvalley.domain.village.VillageLifecycle;
 import dev.syntvalley.persistence.migration.MigrationRegistry;
+import dev.syntvalley.persistence.saveddata.CitizenPersistentRecord;
 import dev.syntvalley.persistence.saveddata.PersistenceBounds;
 import dev.syntvalley.persistence.saveddata.VillagePersistentRecord;
 import dev.syntvalley.persistence.saveddata.VillagePolicyRecord;
@@ -13,7 +17,9 @@ import dev.syntvalley.persistence.saveddata.WorldState;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
@@ -54,6 +60,16 @@ public final class WorldStateCodec {
     private static final Set<String> CORE_KEYS = Set.of("dimension", "pos", "binding_generation");
     private static final Set<String> PRIORITY_KEYS = Set.of("food", "safety", "materials", "housing", "tools", "social");
     private static final Set<String> POLICY_KEYS = Set.of("auto_accept_safe_projects", "max_active_projects");
+    private static final Set<String> CITIZEN_KEYS = Set.of(
+            "id",
+            "village_id",
+            "revision",
+            "lifecycle",
+            "name",
+            "binding_generation",
+            "bound_entity_id",
+            "created_game_time"
+    );
 
     private WorldStateCodec() {
     }
@@ -79,7 +95,13 @@ public final class WorldStateCodec {
                 .forEach(villages::add);
         root.put("villages", villages);
 
-        root.put("citizens", new ListTag());
+        ListTag citizens = new ListTag();
+        state.citizens().values().stream()
+                .sorted((left, right) -> left.id().toString().compareTo(right.id().toString()))
+                .map(WorldStateCodec::encodeCitizen)
+                .forEach(citizens::add);
+        root.put("citizens", citizens);
+
         root.put("tasks", new ListTag());
         root.put("projects", new ListTag());
         root.put("memories", new ListTag());
@@ -119,7 +141,18 @@ public final class WorldStateCodec {
             }
         }
 
-        requireEmptyList(root, "citizens", "citizens");
+        ListTag citizensTag = requireCompoundList(root, "citizens", "citizens");
+        if (citizensTag.size() > PersistenceBounds.MAX_CITIZENS) {
+            throw new PersistenceException("citizens", "collection exceeds " + PersistenceBounds.MAX_CITIZENS);
+        }
+        LinkedHashMap<CitizenId, CitizenPersistentRecord> citizens = new LinkedHashMap<>();
+        for (int index = 0; index < citizensTag.size(); index++) {
+            CitizenPersistentRecord citizen = decodeCitizen(citizensTag.getCompound(index), "citizens[" + index + "]");
+            if (citizens.putIfAbsent(citizen.id(), citizen) != null) {
+                throw new PersistenceException("citizens[" + index + "].id", "duplicate Citizen ID");
+            }
+        }
+
         requireEmptyList(root, "tasks", "tasks");
         requireEmptyList(root, "projects", "projects");
         requireEmptyList(root, "memories", "memories");
@@ -131,7 +164,8 @@ public final class WorldStateCodec {
                     dataRevision,
                     createdAtEpochMs,
                     lastFlushGameTime,
-                    villages
+                    villages,
+                    citizens
             );
         } catch (IllegalArgumentException exception) {
             throw new PersistenceException("root", exception.getMessage());
@@ -280,6 +314,71 @@ public final class WorldStateCodec {
                     lastSimulatedGameTime,
                     priorities,
                     policy
+            );
+        } catch (IllegalArgumentException exception) {
+            throw new PersistenceException(path, exception.getMessage());
+        }
+    }
+
+    private static CompoundTag encodeCitizen(CitizenPersistentRecord citizen) {
+        CompoundTag tag = new CompoundTag();
+        tag.putUUID("id", citizen.id().value());
+        tag.putUUID("village_id", citizen.villageId().value());
+        tag.putLong("revision", citizen.revision());
+        tag.putString("lifecycle", citizen.lifecycle().name());
+        tag.putString("name", citizen.name());
+        tag.putInt("binding_generation", citizen.bindingGeneration());
+        citizen.boundEntityId().ifPresent(entityId -> tag.putUUID("bound_entity_id", entityId));
+        tag.putLong("created_game_time", citizen.createdGameTime());
+        return tag;
+    }
+
+    private static CitizenPersistentRecord decodeCitizen(CompoundTag tag, String path) {
+        requireNoUnknownKeys(tag, CITIZEN_KEYS, path);
+        if (!tag.hasUUID("id")) {
+            throw new PersistenceException(path + ".id", "missing or invalid UUID representation");
+        }
+        if (!tag.hasUUID("village_id")) {
+            throw new PersistenceException(path + ".village_id", "missing or invalid UUID representation");
+        }
+
+        long revision = requirePositiveLong(tag, "revision", path + ".revision");
+
+        CitizenLifecycle lifecycle;
+        String lifecycleName = requireString(tag, "lifecycle", path + ".lifecycle");
+        try {
+            lifecycle = CitizenLifecycle.valueOf(lifecycleName);
+        } catch (IllegalArgumentException exception) {
+            throw new PersistenceException(path + ".lifecycle", "unknown lifecycle");
+        }
+
+        String name = requireString(tag, "name", path + ".name");
+        if (!CitizenConstraints.isValidName(name)) {
+            throw new PersistenceException(path + ".name", "invalid or exceeds code-point bound");
+        }
+
+        int bindingGeneration = requirePositiveInt(tag, "binding_generation", path + ".binding_generation");
+
+        Optional<UUID> boundEntityId = Optional.empty();
+        if (tag.contains("bound_entity_id")) {
+            if (!tag.hasUUID("bound_entity_id")) {
+                throw new PersistenceException(path + ".bound_entity_id", "missing or invalid UUID representation");
+            }
+            boundEntityId = Optional.of(tag.getUUID("bound_entity_id"));
+        }
+
+        long createdGameTime = requireNonNegativeLong(tag, "created_game_time", path + ".created_game_time");
+
+        try {
+            return new CitizenPersistentRecord(
+                    new CitizenId(tag.getUUID("id")),
+                    new VillageId(tag.getUUID("village_id")),
+                    revision,
+                    lifecycle,
+                    name,
+                    bindingGeneration,
+                    boundEntityId,
+                    createdGameTime
             );
         } catch (IllegalArgumentException exception) {
             throw new PersistenceException(path, exception.getMessage());
