@@ -1,3 +1,6 @@
 {
+  "block.syntvalley.synt_core": "Synt Core",
+  "message.syntvalley.core.inspect": "Village %s — %s, revision %s",
+  "message.syntvalley.core.unavailable": "This Synt Core has no available Village binding.",
   "syntvalley.configuration.startup_diagnostics": "Startup diagnostics"
 }

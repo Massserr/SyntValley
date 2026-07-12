@@ -1,6 +1,7 @@
 package dev.syntvalley;
 
 import dev.syntvalley.bootstrap.ProjectIdentity;
+import dev.syntvalley.bootstrap.ServerLifecycleSubscriber;
 import dev.syntvalley.config.SyntValleyConfig;
 import dev.syntvalley.observability.SyntValleyLog;
 import dev.syntvalley.registry.ModRegistries;
@@ -19,6 +20,7 @@ public final class SyntValleyMod {
 
     public SyntValleyMod(IEventBus modEventBus, ModContainer modContainer) {
         ModRegistries.register(modEventBus);
+        ServerLifecycleSubscriber.register();
         modContainer.registerConfig(ModConfig.Type.COMMON, SyntValleyConfig.COMMON_SPEC);
         modEventBus.addListener(SyntValleyMod::onCommonSetup);
 

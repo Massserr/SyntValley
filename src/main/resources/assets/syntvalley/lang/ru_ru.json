@@ -1,3 +1,6 @@
 {
+  "block.syntvalley.synt_core": "Синт-ядро",
+  "message.syntvalley.core.inspect": "Деревня %s — %s, ревизия %s",
+  "message.syntvalley.core.unavailable": "У этого Синт-ядра нет доступной привязки к деревне.",
   "syntvalley.configuration.startup_diagnostics": "Диагностика при запуске"
 }

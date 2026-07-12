@@ -469,7 +469,7 @@ Entity tick выполняет только локальную living/navigation
 
 `WorldStateRepositoryImpl` при успешном commit атомарно заменяет соответствующую immutable persistent record в актуальном in-memory root `SyntValleySavedData`. Затем `DirtyTracker` помечает aggregate key и немедленно гарантирует `setDirty()` для root (повторный вызов дёшев и не пишет файл). Очередь нужна для дедупликации причин, derived indexes/read models, metrics и контролируемого flush bookkeeping; она не держит единственную копию нового состояния.
 
-На periodic cadence coordinator bounded-порциями обслуживает dirty keys. На world save/server stop он полностью завершает bookkeeping/инвариантные проверки, но корректность сериализуемого root не зависит от порядка стороннего pre-save event: актуальные records уже находятся в `SavedData`, а dirty marker поставлен при commit. Физической записью `.dat` управляет штатный world save.
+На periodic cadence coordinator bounded-порциями обслуживает dirty keys. В закреплённом Minecraft/NeoForge 1.21.1 `LevelEvent.Save` публикуется после `DimensionDataStorage#save`, поэтому он служит только post-save verification/metrics hook. Full bookkeeping drain выполняется в `ServerStoppingEvent` до shutdown save; корректность сериализуемого root в любом случае не зависит от очереди или порядка hooks: актуальные records уже находятся в `SavedData`, а dirty marker поставлен при commit. Физической записью `.dat` управляет штатный world save.
 
 ### Save/load flow
 
@@ -489,10 +489,9 @@ sequenceDiagram
     Coord->>Dirty: drain/coalesce bounded batch periodically
     Dirty-->>Coord: dirty keys/reasons
     Coord->>Coord: update indexes, metrics and sync hints
-    MC->>Coord: pre-save hook
-    Coord->>Dirty: drain bookkeeping safely
-    Coord->>SD: verify current root remains dirty/current
     MC->>SD: save(tag, registries)
+    MC->>Coord: post-save verification hook
+    Note over Coord,SD: ServerStoppingEvent drains bookkeeping before shutdown save
 ```
 
 Подробная schema и recovery semantics находятся в `SAVE_FORMAT.md`.

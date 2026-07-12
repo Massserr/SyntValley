@@ -312,6 +312,30 @@
 
 Пересмотреть: не предполагается.
 
+### D-021 — Ошибка decode создаёт quarantined SavedData, а не пустой world state
+
+Статус: `ACCEPTED` в Slice 2
+
+Решение: deserializer `SyntValleySavedData` перехватывает unsupported future schema, migration failure и codec corruption внутри factory и возвращает read-only quarantined instance с исходным root tag и bounded diagnostic. Gameplay runtime для такого state не запускает mutations, instance не помечается dirty и при непредвиденном вызове `save` возвращает defensive copy исходного root.
+
+Почему: фактический `DimensionDataStorage` Minecraft/NeoForge 1.21.1 перехватывает исключение deserializer и `computeIfAbsent` после этого создаёт новый пустой state. Простое `throw` из codec поэтому не является fail-closed и может привести к перезаписи future/corrupt save после первой mutation.
+
+Последствия: мир и сервер могут загрузиться для диагностики, но SyntValley content остаётся persistence-disabled с ясным error log. Автоматический repair/drop records запрещён; восстановление требует совместимой версии или отдельного opt-in repair flow.
+
+Пересмотреть: если закреплённая версия storage API получит официальный способ различать missing data и decode failure без quarantine object.
+
+### D-022 — В 1.21.1 save correctness не зависит от `LevelEvent.Save`
+
+Статус: `ACCEPTED` в Slice 2
+
+Решение: успешный repository commit сначала заменяет canonical in-memory root и немедленно вызывает `SavedData#setDirty()`. Periodic cadence обслуживает bounded dirty bookkeeping, `ServerStoppingEvent` выполняет full drain до shutdown save, а `LevelEvent.Save` используется только как post-save verification/metrics hook и не считается pre-save callback.
+
+Почему: в фактическом `ServerLevel#save` версии 1.21.1 `getDataStorage().save()` вызывается до публикации `LevelEvent.Save`. Обновлять единственную копию state или ставить первый dirty marker в этом event слишком поздно для текущего save cycle.
+
+Последствия: latest aggregate revision сохраняется штатным Minecraft save независимо от очереди bookkeeping. Post-save hook не создаёт новую mutation только ради `last_flush_game_time`; этот metadata marker обновляется при реальном periodic/stop drain.
+
+Пересмотреть: при смене закреплённой Minecraft/NeoForge версии после проверки реального порядка hooks.
+
 ## 4. Решения, отложенные до соответствующего slice
 
 ### P-001 — Конкретный NeoForge/ModDevGradle patch version
