@@ -36,11 +36,20 @@ public record VillageOverviewDto(
         }
     }
 
-    public record CitizenOverviewEntry(String citizenId, String name, String lifecycle, boolean present) {
+    public record CitizenOverviewEntry(
+            String citizenId,
+            String name,
+            String lifecycle,
+            boolean present,
+            int hunger,
+            int rest,
+            String activity
+    ) {
         public CitizenOverviewEntry {
             Objects.requireNonNull(citizenId, "citizenId");
             Objects.requireNonNull(name, "name");
             Objects.requireNonNull(lifecycle, "lifecycle");
+            Objects.requireNonNull(activity, "activity");
         }
     }
 }

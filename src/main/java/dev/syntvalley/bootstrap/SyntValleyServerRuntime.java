@@ -10,10 +10,17 @@ import dev.syntvalley.application.service.CoreBindingService;
 import dev.syntvalley.application.service.PendingConsoleLinks;
 import dev.syntvalley.application.service.ScreenSessionRegistry;
 import dev.syntvalley.application.service.VillageApplicationService;
+import dev.syntvalley.application.simulation.CitizenSimulationStep;
 import dev.syntvalley.domain.citizen.CitizenAggregate;
 import dev.syntvalley.domain.citizen.CitizenEntityBinding;
+import dev.syntvalley.domain.citizen.CitizenLifecycle;
 import dev.syntvalley.domain.identity.CitizenId;
+import dev.syntvalley.domain.identity.TaskId;
 import dev.syntvalley.domain.identity.VillageId;
+import dev.syntvalley.domain.need.NeedDecayRates;
+import dev.syntvalley.domain.need.NeedKind;
+import dev.syntvalley.domain.need.NeedUpdatePolicy;
+import dev.syntvalley.domain.need.Needs;
 import dev.syntvalley.domain.village.CoreBinding;
 import dev.syntvalley.domain.village.CoreLocation;
 import dev.syntvalley.domain.village.VillageAggregate;
@@ -33,6 +40,9 @@ public final class SyntValleyServerRuntime {
     /** How long a "select Village for Console link" selection stays valid, in game ticks. */
     public static final long LINK_EXPIRY_TICKS = 600L;
 
+    /** Rest points recovered per serviced simulation step while a citizen rests in place. */
+    private static final int REST_RECOVERY_PER_STEP = 60;
+
     private final MinecraftServer server;
     private final SyntValleySavedData savedData;
     private final VillageStateRepository villageRepository;
@@ -43,6 +53,9 @@ public final class SyntValleyServerRuntime {
     private final PendingConsoleLinks pendingConsoleLinks = new PendingConsoleLinks();
     private final ScreenSessionRegistry screenSessions = new ScreenSessionRegistry();
     private final VillageOverviewQuery overviewQuery;
+    private final NeedDecayRates needDecayRates = NeedDecayRates.defaults();
+    private final CitizenSimulationStep simulationStep =
+            new CitizenSimulationStep(needDecayRates, REST_RECOVERY_PER_STEP);
     private final PersistenceCoordinator persistenceCoordinator;
     private boolean acceptingCommands = true;
 
@@ -140,6 +153,40 @@ public final class SyntValleyServerRuntime {
     public int citizenCount() {
         assertServerThread();
         return citizenRepository.citizenCount();
+    }
+
+    /** Advances one loaded citizen's needs and active task, persisting only when something changed. */
+    public void simulateCitizen(CitizenId citizenId, long gameTime) {
+        assertServerThread();
+        if (!acceptingCommands) {
+            return;
+        }
+        Optional<CitizenAggregate> current = citizenRepository.find(citizenId);
+        if (current.isEmpty() || current.orElseThrow().lifecycle() != CitizenLifecycle.ACTIVE) {
+            return;
+        }
+        CitizenAggregate citizen = current.orElseThrow();
+        CitizenAggregate advanced = simulationStep.advance(citizen, gameTime, TaskId::random);
+        if (advanced != citizen) {
+            citizenRepository.update(advanced, citizen.revision());
+        }
+    }
+
+    /** Feeds a citizen: brings needs up to now, then replenishes hunger. Returns whether it applied. */
+    public boolean feedCitizen(CitizenId citizenId, int hungerAmount, long gameTime) {
+        assertServerThread();
+        if (!acceptingCommands || hungerAmount <= 0) {
+            return false;
+        }
+        Optional<CitizenAggregate> current = citizenRepository.find(citizenId);
+        if (current.isEmpty() || current.orElseThrow().lifecycle() != CitizenLifecycle.ACTIVE) {
+            return false;
+        }
+        CitizenAggregate citizen = current.orElseThrow();
+        Needs fedNeeds = NeedUpdatePolicy.advance(citizen.needs(), gameTime, needDecayRates)
+                .replenish(NeedKind.HUNGER, hungerAmount);
+        citizenRepository.update(citizen.withSimulation(fedNeeds, citizen.activeTask()), citizen.revision());
+        return true;
     }
 
     public void selectVillageForLink(UUID player, VillageId villageId, long gameTime) {

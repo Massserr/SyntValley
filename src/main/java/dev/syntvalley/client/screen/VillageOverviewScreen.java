@@ -52,7 +52,8 @@ public final class VillageOverviewScreen extends Screen {
             VillageOverviewDto.CitizenOverviewEntry entry = overview.residents().get(index);
             String presence = entry.present() ? "●" : "○";
             graphics.drawString(this.font,
-                    Component.literal(presence + " " + entry.name() + " — " + entry.lifecycle()),
+                    Component.literal(presence + " " + entry.name() + " — " + entry.activity()
+                            + "  (hunger " + entry.hunger() + ", rest " + entry.rest() + ")"),
                     left, top + 46 + index * 11, 0xDDDDDD);
         }
         int remaining = overview.residentCount() - listed;

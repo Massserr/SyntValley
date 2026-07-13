@@ -6,10 +6,14 @@ import dev.syntvalley.domain.citizen.CitizenEntityBinding;
 import dev.syntvalley.observability.SyntValleyLog;
 import java.util.Objects;
 import java.util.Optional;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.PathfinderMob;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
@@ -26,6 +30,9 @@ import net.minecraft.world.level.Level;
  * it carries only its binding and delegates identity reconciliation and death to the world runtime.
  */
 public final class SyntCitizenEntity extends PathfinderMob {
+    private static final int SIMULATION_INTERVAL_TICKS = 20;
+    private static final int HUNGER_PER_FEED = 300;
+
     private CitizenEntityBinding binding;
     private boolean invalidBinding;
     private boolean reconciled;
@@ -69,10 +76,42 @@ public final class SyntCitizenEntity extends PathfinderMob {
     @Override
     public void tick() {
         super.tick();
-        if (!reconciled && level() instanceof ServerLevel serverLevel) {
+        if (!(level() instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        if (!reconciled) {
             reconciled = true;
             reconcile(serverLevel);
+            return;
         }
+        if (!invalidBinding && binding != null && shouldSimulate()) {
+            ServerRuntimeManager.getOrCreate(serverLevel.getServer())
+                    .simulateCitizen(binding.citizenId(), serverLevel.getGameTime());
+        }
+    }
+
+    /** Staggered by UUID so citizens are not all serviced on the same tick. */
+    private boolean shouldSimulate() {
+        return tickCount % SIMULATION_INTERVAL_TICKS == Math.floorMod(getUUID().hashCode(), SIMULATION_INTERVAL_TICKS);
+    }
+
+    @Override
+    public InteractionResult mobInteract(Player player, InteractionHand hand) {
+        ItemStack stack = player.getItemInHand(hand);
+        if (stack.has(DataComponents.FOOD)
+                && !invalidBinding
+                && binding != null
+                && level() instanceof ServerLevel serverLevel) {
+            boolean fed = ServerRuntimeManager.getOrCreate(serverLevel.getServer())
+                    .feedCitizen(binding.citizenId(), HUNGER_PER_FEED, serverLevel.getGameTime());
+            if (fed) {
+                if (!player.getAbilities().instabuild) {
+                    stack.shrink(1);
+                }
+                return InteractionResult.SUCCESS;
+            }
+        }
+        return super.mobInteract(player, hand);
     }
 
     private void reconcile(ServerLevel level) {

@@ -32,6 +32,9 @@ public final class VillageOverviewStreamCodecs {
             buf.writeUtf(entry.name());
             buf.writeUtf(entry.lifecycle());
             buf.writeBoolean(entry.present());
+            buf.writeInt(entry.hunger());
+            buf.writeInt(entry.rest());
+            buf.writeUtf(entry.activity());
         }
     }
 
@@ -50,7 +53,8 @@ public final class VillageOverviewStreamCodecs {
         List<VillageOverviewDto.CitizenOverviewEntry> residents = new ArrayList<>(size);
         for (int index = 0; index < size; index++) {
             residents.add(new VillageOverviewDto.CitizenOverviewEntry(
-                    buf.readUtf(), buf.readUtf(), buf.readUtf(), buf.readBoolean()));
+                    buf.readUtf(), buf.readUtf(), buf.readUtf(), buf.readBoolean(),
+                    buf.readInt(), buf.readInt(), buf.readUtf()));
         }
         return new VillageOverviewDto(villageId, name, lifecycle, revision, coreBound, residentCount, residentsTruncated, residents);
     }

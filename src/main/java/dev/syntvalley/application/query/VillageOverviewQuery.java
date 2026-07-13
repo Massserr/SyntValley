@@ -42,7 +42,10 @@ public final class VillageOverviewQuery {
                     citizen.id().toString(),
                     citizen.name(),
                     citizen.lifecycle().name(),
-                    citizen.boundEntityId().isPresent()
+                    citizen.boundEntityId().isPresent(),
+                    citizen.needs().hunger(),
+                    citizen.needs().rest(),
+                    citizen.activeTask().map(task -> task.kind().name()).orElse("NONE")
             ));
         }
 
