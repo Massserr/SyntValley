@@ -7,10 +7,13 @@ import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.ItemInteractionResult;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseEntityBlock;
 import net.minecraft.world.level.block.RenderShape;
@@ -60,6 +63,31 @@ public final class SyntCoreBlock extends BaseEntityBlock {
             core.handleServerRemoval(serverLevel);
         }
         super.onRemove(state, level, pos, newState, movedByPiston);
+    }
+
+    @Override
+    protected ItemInteractionResult useItemOn(
+            ItemStack stack,
+            BlockState state,
+            Level level,
+            BlockPos pos,
+            Player player,
+            InteractionHand hand,
+            BlockHitResult hitResult
+    ) {
+        if (!stack.is(Items.EMERALD)) {
+            return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
+        }
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return ItemInteractionResult.SUCCESS;
+        }
+        if (level.getBlockEntity(pos) instanceof SyntCoreBlockEntity core) {
+            SyntCoreBlockEntity.HireResultStatus outcome = core.hireCitizen(serverLevel, player, stack);
+            player.displayClientMessage(Component.translatable(outcome.messageKey()), false);
+        } else {
+            player.displayClientMessage(Component.translatable("message.syntvalley.core.unavailable"), false);
+        }
+        return ItemInteractionResult.SUCCESS;
     }
 
     @Override

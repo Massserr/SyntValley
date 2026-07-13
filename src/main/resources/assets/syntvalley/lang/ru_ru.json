@@ -1,6 +1,12 @@
 {
   "block.syntvalley.synt_core": "Синт-ядро",
+  "entity.syntvalley.synt_citizen": "Синт-житель",
   "message.syntvalley.core.inspect": "Деревня %s — %s, ревизия %s",
   "message.syntvalley.core.unavailable": "У этого Синт-ядра нет доступной привязки к деревне.",
+  "message.syntvalley.core.hire.success": "Нанят новый Синт-житель.",
+  "message.syntvalley.core.hire.payment": "Недостаточно изумрудов, чтобы нанять жителя.",
+  "message.syntvalley.core.hire.space": "Рядом с ядром нет места для нового жителя.",
+  "message.syntvalley.core.hire.full": "В этой деревне больше нет места для жителей.",
+  "message.syntvalley.core.hire.rejected": "Синт-ядро сейчас не может нанять жителя.",
   "syntvalley.configuration.startup_diagnostics": "Диагностика при запуске"
 }

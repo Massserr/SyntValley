@@ -1,6 +1,12 @@
 {
   "block.syntvalley.synt_core": "Synt Core",
+  "entity.syntvalley.synt_citizen": "Synt Citizen",
   "message.syntvalley.core.inspect": "Village %s — %s, revision %s",
   "message.syntvalley.core.unavailable": "This Synt Core has no available Village binding.",
+  "message.syntvalley.core.hire.success": "Hired a new Synt Citizen.",
+  "message.syntvalley.core.hire.payment": "Not enough emeralds to hire a citizen.",
+  "message.syntvalley.core.hire.space": "No room to place a new citizen near the Core.",
+  "message.syntvalley.core.hire.full": "This village cannot support more citizens.",
+  "message.syntvalley.core.hire.rejected": "The Synt Core could not hire a citizen right now.",
   "syntvalley.configuration.startup_diagnostics": "Startup diagnostics"
 }
