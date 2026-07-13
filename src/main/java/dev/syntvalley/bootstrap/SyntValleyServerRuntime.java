@@ -2,10 +2,13 @@ package dev.syntvalley.bootstrap;
 
 import dev.syntvalley.application.port.CitizenStateRepository;
 import dev.syntvalley.application.port.VillageStateRepository;
+import dev.syntvalley.application.query.VillageOverviewDto;
+import dev.syntvalley.application.query.VillageOverviewQuery;
 import dev.syntvalley.application.service.CitizenApplicationService;
 import dev.syntvalley.application.service.CitizenBindingService;
 import dev.syntvalley.application.service.CoreBindingService;
 import dev.syntvalley.application.service.PendingConsoleLinks;
+import dev.syntvalley.application.service.ScreenSessionRegistry;
 import dev.syntvalley.application.service.VillageApplicationService;
 import dev.syntvalley.domain.citizen.CitizenAggregate;
 import dev.syntvalley.domain.citizen.CitizenEntityBinding;
@@ -38,6 +41,8 @@ public final class SyntValleyServerRuntime {
     private final CitizenApplicationService citizenService;
     private final CitizenBindingService citizenBindingService;
     private final PendingConsoleLinks pendingConsoleLinks = new PendingConsoleLinks();
+    private final ScreenSessionRegistry screenSessions = new ScreenSessionRegistry();
+    private final VillageOverviewQuery overviewQuery;
     private final PersistenceCoordinator persistenceCoordinator;
     private boolean acceptingCommands = true;
 
@@ -51,6 +56,7 @@ public final class SyntValleyServerRuntime {
         this.citizenRepository = new SavedDataCitizenRepository(server, savedData, dirtyTracker);
         this.citizenService = new CitizenApplicationService(citizenRepository, villageRepository, CitizenId::random);
         this.citizenBindingService = new CitizenBindingService(citizenRepository);
+        this.overviewQuery = new VillageOverviewQuery(villageRepository, citizenRepository);
         this.persistenceCoordinator = new PersistenceCoordinator(savedData, dirtyTracker);
     }
 
@@ -155,6 +161,31 @@ public final class SyntValleyServerRuntime {
         }
         VillageId villageId = selected.orElseThrow();
         return villageRepository.find(villageId).isPresent() ? Optional.of(villageId) : Optional.empty();
+    }
+
+    /** Registers an overview session for the viewer and returns the initial snapshot, if available. */
+    public Optional<VillageOverviewDto> openOverview(
+            UUID viewer, VillageId villageId, String dimensionId, long consolePackedPos, long gameTime) {
+        assertServerThread();
+        if (!acceptingCommands) {
+            return Optional.empty();
+        }
+        Optional<VillageOverviewDto> overview = overviewQuery.overview(villageId);
+        if (overview.isEmpty()) {
+            return Optional.empty();
+        }
+        ScreenSessionRegistry.OpenResult opened =
+                screenSessions.open(viewer, villageId, dimensionId, consolePackedPos, gameTime);
+        if (opened instanceof ScreenSessionRegistry.OpenResult.Rejected) {
+            return Optional.empty();
+        }
+        screenSessions.markServed(viewer, overview.orElseThrow().revision(), gameTime);
+        return overview;
+    }
+
+    public void closeOverview(UUID viewer) {
+        assertServerThread();
+        screenSessions.close(viewer);
     }
 
     public void onServerTick(long gameTime) {

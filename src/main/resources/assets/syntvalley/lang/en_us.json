@@ -13,5 +13,9 @@
   "message.syntvalley.console.linked": "Village Console linked.",
   "message.syntvalley.console.no_selection": "Right-click a Synt Core first to select its Village.",
   "message.syntvalley.console.overview": "Village %s — %s, revision %s",
+  "screen.syntvalley.village_overview": "Village Overview",
+  "screen.syntvalley.village_overview.loading": "Loading…",
+  "screen.syntvalley.village_overview.residents": "Residents: %s",
+  "screen.syntvalley.village_overview.more": "…and %s more",
   "syntvalley.configuration.startup_diagnostics": "Startup diagnostics"
 }

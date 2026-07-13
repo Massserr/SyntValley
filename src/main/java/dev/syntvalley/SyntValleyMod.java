@@ -3,6 +3,7 @@ package dev.syntvalley;
 import dev.syntvalley.bootstrap.ProjectIdentity;
 import dev.syntvalley.bootstrap.ServerLifecycleSubscriber;
 import dev.syntvalley.config.SyntValleyConfig;
+import dev.syntvalley.network.SyntValleyNetwork;
 import dev.syntvalley.observability.SyntValleyLog;
 import dev.syntvalley.registry.ModRegistries;
 import net.neoforged.bus.api.IEventBus;
@@ -21,6 +22,7 @@ public final class SyntValleyMod {
     public SyntValleyMod(IEventBus modEventBus, ModContainer modContainer) {
         ModRegistries.register(modEventBus);
         ServerLifecycleSubscriber.register();
+        modEventBus.addListener(SyntValleyNetwork::register);
         modContainer.registerConfig(ModConfig.Type.COMMON, SyntValleyConfig.COMMON_SPEC);
         modEventBus.addListener(SyntValleyMod::onCommonSetup);
 

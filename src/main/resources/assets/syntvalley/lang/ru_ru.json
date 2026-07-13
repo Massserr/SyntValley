@@ -13,5 +13,9 @@
   "message.syntvalley.console.linked": "Консоль деревни привязана.",
   "message.syntvalley.console.no_selection": "Сначала нажмите ПКМ по Синт-ядру, чтобы выбрать деревню.",
   "message.syntvalley.console.overview": "Деревня %s — %s, ревизия %s",
+  "screen.syntvalley.village_overview": "Обзор деревни",
+  "screen.syntvalley.village_overview.loading": "Загрузка…",
+  "screen.syntvalley.village_overview.residents": "Жителей: %s",
+  "screen.syntvalley.village_overview.more": "…и ещё %s",
   "syntvalley.configuration.startup_diagnostics": "Диагностика при запуске"
 }

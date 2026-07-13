@@ -2,11 +2,11 @@ package dev.syntvalley.content.block;
 
 import com.mojang.serialization.MapCodec;
 import dev.syntvalley.content.blockentity.VillageConsoleBlockEntity;
-import java.util.Optional;
 import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
@@ -64,19 +64,7 @@ public final class VillageConsoleBlock extends BaseEntityBlock {
                 );
                 return InteractionResult.SUCCESS;
             }
-
-            Optional<VillageConsoleBlockEntity.InspectView> view = console.inspect(serverLevel);
-            if (view.isPresent()) {
-                VillageConsoleBlockEntity.InspectView inspection = view.orElseThrow();
-                player.displayClientMessage(
-                        Component.translatable(
-                                "message.syntvalley.console.overview",
-                                inspection.villageId(),
-                                inspection.lifecycle(),
-                                inspection.revision()
-                        ),
-                        false
-                );
+            if (player instanceof ServerPlayer serverPlayer && console.openOverviewFor(serverLevel, serverPlayer)) {
                 return InteractionResult.SUCCESS;
             }
         }

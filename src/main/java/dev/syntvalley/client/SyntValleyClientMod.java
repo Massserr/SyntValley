@@ -1,9 +1,13 @@
 package dev.syntvalley.client;
 
 import dev.syntvalley.SyntValleyMod;
+import dev.syntvalley.application.query.VillageOverviewDto;
 import dev.syntvalley.client.renderer.SyntCitizenRenderer;
+import dev.syntvalley.client.screen.VillageOverviewScreen;
+import dev.syntvalley.network.ClientOverviewDispatch;
 import dev.syntvalley.observability.SyntValleyLog;
 import dev.syntvalley.registry.ModEntityTypes;
+import net.minecraft.client.Minecraft;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
@@ -20,10 +24,20 @@ public final class SyntValleyClientMod {
     public SyntValleyClientMod(IEventBus modEventBus, ModContainer modContainer) {
         modContainer.registerExtensionPoint(IConfigScreenFactory.class, ConfigurationScreen::new);
         modEventBus.addListener(SyntValleyClientMod::registerRenderers);
+        ClientOverviewDispatch.setHandler(SyntValleyClientMod::openOrUpdateOverview);
         SyntValleyLog.logger().info("Initialized SyntValley client bootstrap");
     }
 
     private static void registerRenderers(EntityRenderersEvent.RegisterRenderers event) {
         event.registerEntityRenderer(ModEntityTypes.SYNT_CITIZEN.get(), SyntCitizenRenderer::new);
+    }
+
+    private static void openOrUpdateOverview(VillageOverviewDto overview) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof VillageOverviewScreen screen) {
+            screen.applySnapshot(overview);
+        } else {
+            minecraft.setScreen(new VillageOverviewScreen(overview));
+        }
     }
 }

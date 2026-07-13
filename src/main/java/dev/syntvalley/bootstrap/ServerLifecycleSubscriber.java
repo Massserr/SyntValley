@@ -2,7 +2,9 @@ package dev.syntvalley.bootstrap;
 
 import dev.syntvalley.observability.SyntValleyLog;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.level.LevelEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppedEvent;
@@ -20,6 +22,14 @@ public final class ServerLifecycleSubscriber {
         NeoForge.EVENT_BUS.addListener(ServerLifecycleSubscriber::onLevelSaved);
         NeoForge.EVENT_BUS.addListener(ServerLifecycleSubscriber::onServerStopping);
         NeoForge.EVENT_BUS.addListener(ServerLifecycleSubscriber::onServerStopped);
+        NeoForge.EVENT_BUS.addListener(ServerLifecycleSubscriber::onPlayerLoggedOut);
+    }
+
+    private static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player) {
+            ServerRuntimeManager.find(player.getServer())
+                    .ifPresent(runtime -> runtime.closeOverview(player.getUUID()));
+        }
     }
 
     private static void onServerStarted(ServerStartedEvent event) {
