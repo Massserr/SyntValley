@@ -1,8 +1,9 @@
 package dev.syntvalley.domain.task;
 
-/** Minimal Slice 5 deterministic Java tasks. Profession/work tasks arrive in later slices. */
+/** Deterministic Java tasks. Slice 5 added the needs-driven kinds; Slice 6 adds profession WORK. */
 public enum TaskKind {
     REST,
     IDLE,
-    REQUEST_FOOD
+    REQUEST_FOOD,
+    WORK
 }
