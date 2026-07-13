@@ -125,6 +125,15 @@ public final class SyntCoreBlockEntity extends BlockEntity {
                 .map(InspectView::fromVillage);
     }
 
+    /** Selects this Core's Village as the player's pending Village Console link target. */
+    public void selectForLink(ServerLevel level, Player player) {
+        if (invalidBinding || binding == null) {
+            return;
+        }
+        ServerRuntimeManager.getOrCreate(level.getServer())
+                .selectVillageForLink(player.getUUID(), binding.villageId(), level.getGameTime());
+    }
+
     /**
      * Server-authoritative hire triggered by a player. Validates binding, payment and spawn space,
      * creates the canonical Citizen record via the runtime, then spawns its bound entity near the Core.

@@ -104,6 +104,7 @@ public final class SyntCoreBlock extends BaseEntityBlock {
 
         if (level.getBlockEntity(pos) instanceof SyntCoreBlockEntity core) {
             core.ensureServerBinding(serverLevel);
+            core.selectForLink(serverLevel, player);
             Optional<SyntCoreBlockEntity.InspectView> view = core.inspect(serverLevel);
             if (view.isPresent()) {
                 SyntCoreBlockEntity.InspectView inspection = view.orElseThrow();
@@ -116,6 +117,7 @@ public final class SyntCoreBlock extends BaseEntityBlock {
                         ),
                         false
                 );
+                player.displayClientMessage(Component.translatable("message.syntvalley.core.link_selected"), true);
                 return InteractionResult.SUCCESS;
             }
         }

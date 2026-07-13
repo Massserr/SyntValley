@@ -2,6 +2,7 @@ package dev.syntvalley.registry;
 
 import dev.syntvalley.bootstrap.ProjectIdentity;
 import dev.syntvalley.content.block.SyntCoreBlock;
+import dev.syntvalley.content.block.VillageConsoleBlock;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.material.MapColor;
@@ -17,6 +18,16 @@ public final class ModBlocks {
             SyntCoreBlock::new,
             BlockBehaviour.Properties.of()
                     .mapColor(MapColor.COLOR_PURPLE)
+                    .strength(3.5F, 6.0F)
+                    .sound(SoundType.AMETHYST)
+                    .pushReaction(PushReaction.BLOCK)
+    );
+
+    public static final DeferredBlock<VillageConsoleBlock> VILLAGE_CONSOLE = BLOCKS.registerBlock(
+            "village_console",
+            VillageConsoleBlock::new,
+            BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.COLOR_CYAN)
                     .strength(3.5F, 6.0F)
                     .sound(SoundType.AMETHYST)
                     .pushReaction(PushReaction.BLOCK)

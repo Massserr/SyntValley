@@ -5,6 +5,7 @@ import dev.syntvalley.application.port.VillageStateRepository;
 import dev.syntvalley.application.service.CitizenApplicationService;
 import dev.syntvalley.application.service.CitizenBindingService;
 import dev.syntvalley.application.service.CoreBindingService;
+import dev.syntvalley.application.service.PendingConsoleLinks;
 import dev.syntvalley.application.service.VillageApplicationService;
 import dev.syntvalley.domain.citizen.CitizenAggregate;
 import dev.syntvalley.domain.citizen.CitizenEntityBinding;
@@ -26,6 +27,9 @@ import net.minecraft.server.MinecraftServer;
 
 /** Per-MinecraftServer composition root. Canonical gameplay state remains in SavedData. */
 public final class SyntValleyServerRuntime {
+    /** How long a "select Village for Console link" selection stays valid, in game ticks. */
+    public static final long LINK_EXPIRY_TICKS = 600L;
+
     private final MinecraftServer server;
     private final SyntValleySavedData savedData;
     private final VillageStateRepository villageRepository;
@@ -33,6 +37,7 @@ public final class SyntValleyServerRuntime {
     private final CoreBindingService coreBindingService;
     private final CitizenApplicationService citizenService;
     private final CitizenBindingService citizenBindingService;
+    private final PendingConsoleLinks pendingConsoleLinks = new PendingConsoleLinks();
     private final PersistenceCoordinator persistenceCoordinator;
     private boolean acceptingCommands = true;
 
@@ -129,6 +134,27 @@ public final class SyntValleyServerRuntime {
     public int citizenCount() {
         assertServerThread();
         return citizenRepository.citizenCount();
+    }
+
+    public void selectVillageForLink(UUID player, VillageId villageId, long gameTime) {
+        assertServerThread();
+        if (acceptingCommands) {
+            pendingConsoleLinks.select(player, villageId, gameTime + LINK_EXPIRY_TICKS);
+        }
+    }
+
+    /** Consumes a player's pending selection and binds a Console if the selected Village still exists. */
+    public Optional<VillageId> bindConsole(UUID player, long gameTime) {
+        assertServerThread();
+        if (!acceptingCommands) {
+            return Optional.empty();
+        }
+        Optional<VillageId> selected = pendingConsoleLinks.consume(player, gameTime);
+        if (selected.isEmpty()) {
+            return Optional.empty();
+        }
+        VillageId villageId = selected.orElseThrow();
+        return villageRepository.find(villageId).isPresent() ? Optional.of(villageId) : Optional.empty();
     }
 
     public void onServerTick(long gameTime) {

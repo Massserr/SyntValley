@@ -31,6 +31,7 @@ public final class ModRegistries {
     private static void addCreativeTabEntries(BuildCreativeModeTabContentsEvent event) {
         if (event.getTabKey() == CreativeModeTabs.FUNCTIONAL_BLOCKS) {
             event.accept(new ItemStack(ModItems.SYNT_CORE.get()));
+            event.accept(new ItemStack(ModItems.VILLAGE_CONSOLE.get()));
         }
     }
 
