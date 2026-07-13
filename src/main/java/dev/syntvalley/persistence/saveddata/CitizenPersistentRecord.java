@@ -5,14 +5,15 @@ import dev.syntvalley.domain.citizen.CitizenLifecycle;
 import dev.syntvalley.domain.identity.CitizenId;
 import dev.syntvalley.domain.identity.VillageId;
 import dev.syntvalley.domain.need.Needs;
+import dev.syntvalley.domain.profession.CitizenProfession;
 import dev.syntvalley.domain.task.Task;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Schema-1 Citizen record. Slice 3 stored identity; Slice 5 adds needs and the single active task.
- * Older saves without these fields default to full needs and no task on load (forward fill).
+ * Schema-1 Citizen record. Slice 3 stored identity; Slice 5 added needs and the active task; Slice 6
+ * adds an optional profession. Older saves without a field default it on load (forward fill).
  */
 public record CitizenPersistentRecord(
         CitizenId id,
@@ -24,7 +25,8 @@ public record CitizenPersistentRecord(
         Optional<UUID> boundEntityId,
         long createdGameTime,
         Needs needs,
-        Optional<Task> activeTask
+        Optional<Task> activeTask,
+        Optional<CitizenProfession> profession
 ) {
     public CitizenPersistentRecord {
         Objects.requireNonNull(id, "id");
@@ -34,11 +36,12 @@ public record CitizenPersistentRecord(
         boundEntityId = Objects.requireNonNull(boundEntityId, "boundEntityId");
         Objects.requireNonNull(needs, "needs");
         activeTask = Objects.requireNonNull(activeTask, "activeTask");
+        profession = Objects.requireNonNull(profession, "profession");
 
         // Reuse domain validation for the full aggregate shape.
         new CitizenAggregate(
                 id, villageId, revision, lifecycle, name, bindingGeneration, boundEntityId,
-                createdGameTime, needs, activeTask);
+                createdGameTime, needs, activeTask, profession);
     }
 
     public static CitizenPersistentRecord fromAggregate(CitizenAggregate citizen) {
@@ -53,7 +56,8 @@ public record CitizenPersistentRecord(
                 citizen.boundEntityId(),
                 citizen.createdGameTime(),
                 citizen.needs(),
-                citizen.activeTask()
+                citizen.activeTask(),
+                citizen.profession()
         );
     }
 
@@ -68,6 +72,6 @@ public record CitizenPersistentRecord(
     public CitizenAggregate toAggregate() {
         return new CitizenAggregate(
                 id, villageId, revision, lifecycle, name, bindingGeneration, boundEntityId,
-                createdGameTime, needs, activeTask);
+                createdGameTime, needs, activeTask, profession);
     }
 }

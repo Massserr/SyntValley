@@ -185,7 +185,8 @@ public final class SyntValleyServerRuntime {
         CitizenAggregate citizen = current.orElseThrow();
         Needs fedNeeds = NeedUpdatePolicy.advance(citizen.needs(), gameTime, needDecayRates)
                 .replenish(NeedKind.HUNGER, hungerAmount);
-        citizenRepository.update(citizen.withSimulation(fedNeeds, citizen.activeTask()), citizen.revision());
+        citizenRepository.update(
+                citizen.withSimulation(fedNeeds, citizen.activeTask(), citizen.profession()), citizen.revision());
         return true;
     }
 

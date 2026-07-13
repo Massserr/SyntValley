@@ -7,6 +7,8 @@ import dev.syntvalley.domain.identity.TaskId;
 import dev.syntvalley.domain.identity.VillageId;
 import dev.syntvalley.domain.need.NeedBounds;
 import dev.syntvalley.domain.need.Needs;
+import dev.syntvalley.domain.profession.CitizenProfession;
+import dev.syntvalley.domain.profession.ProfessionId;
 import dev.syntvalley.domain.task.Task;
 import dev.syntvalley.domain.task.TaskFailureReason;
 import dev.syntvalley.domain.task.TaskKind;
@@ -77,9 +79,12 @@ public final class WorldStateCodec {
             "bound_entity_id",
             "created_game_time",
             "needs",
-            "active_task"
+            "active_task",
+            "profession"
     );
     private static final Set<String> NEEDS_KEYS = Set.of("last_updated_game_time", "hunger", "rest");
+    private static final Set<String> PROFESSION_KEYS =
+            Set.of("definition_id", "level", "experience", "changed_game_time");
     private static final Set<String> TASK_KEYS = Set.of(
             "id",
             "kind",
@@ -352,6 +357,16 @@ public final class WorldStateCodec {
         tag.putLong("created_game_time", citizen.createdGameTime());
         tag.put("needs", encodeNeeds(citizen.needs()));
         citizen.activeTask().ifPresent(task -> tag.put("active_task", encodeTask(task)));
+        citizen.profession().ifPresent(profession -> tag.put("profession", encodeProfession(profession)));
+        return tag;
+    }
+
+    private static CompoundTag encodeProfession(CitizenProfession profession) {
+        CompoundTag tag = new CompoundTag();
+        tag.putString("definition_id", profession.professionId().value());
+        tag.putInt("level", profession.level());
+        tag.putLong("experience", profession.experience());
+        tag.putLong("changed_game_time", profession.changedGameTime());
         return tag;
     }
 
@@ -424,6 +439,12 @@ public final class WorldStateCodec {
                     requireCompound(tag, "active_task", path + ".active_task"), citizenId, path + ".active_task"));
         }
 
+        Optional<CitizenProfession> profession = Optional.empty();
+        if (tag.contains("profession")) {
+            profession = Optional.of(decodeProfession(
+                    requireCompound(tag, "profession", path + ".profession"), path + ".profession"));
+        }
+
         try {
             return new CitizenPersistentRecord(
                     citizenId,
@@ -435,8 +456,25 @@ public final class WorldStateCodec {
                     boundEntityId,
                     createdGameTime,
                     needs,
-                    activeTask
+                    activeTask,
+                    profession
             );
+        } catch (IllegalArgumentException exception) {
+            throw new PersistenceException(path, exception.getMessage());
+        }
+    }
+
+    private static CitizenProfession decodeProfession(CompoundTag tag, String path) {
+        requireNoUnknownKeys(tag, PROFESSION_KEYS, path);
+        String definitionId = requireString(tag, "definition_id", path + ".definition_id");
+        if (!ProfessionId.isValid(definitionId)) {
+            throw new PersistenceException(path + ".definition_id", "invalid profession id");
+        }
+        int level = requirePositiveInt(tag, "level", path + ".level");
+        long experience = requireNonNegativeLong(tag, "experience", path + ".experience");
+        long changedGameTime = requireNonNegativeLong(tag, "changed_game_time", path + ".changed_game_time");
+        try {
+            return new CitizenProfession(new ProfessionId(definitionId), level, experience, changedGameTime);
         } catch (IllegalArgumentException exception) {
             throw new PersistenceException(path, exception.getMessage());
         }

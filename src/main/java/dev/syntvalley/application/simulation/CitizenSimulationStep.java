@@ -59,6 +59,6 @@ public final class CitizenSimulationStep {
         if (afterEffect.equals(citizen.needs()) && nextActiveTask.equals(citizen.activeTask())) {
             return citizen;
         }
-        return citizen.withSimulation(afterEffect, nextActiveTask);
+        return citizen.withSimulation(afterEffect, nextActiveTask, citizen.profession());
     }
 }

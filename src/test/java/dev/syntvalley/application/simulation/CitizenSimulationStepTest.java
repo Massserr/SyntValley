@@ -48,7 +48,8 @@ class CitizenSimulationStepTest {
     void restingRecoversRest() {
         CitizenAggregate tired = freshCitizen().withSimulation(
                 new Needs(800, 150, 0),
-                Optional.of(Task.create(TaskId.random(), CITIZEN, TaskKind.REST, 0)));
+                Optional.of(Task.create(TaskId.random(), CITIZEN, TaskKind.REST, 0)),
+                Optional.empty());
 
         CitizenAggregate rested = step.advance(tired, 100, TaskId::random);
 

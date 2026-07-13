@@ -3,15 +3,15 @@ package dev.syntvalley.domain.citizen;
 import dev.syntvalley.domain.identity.CitizenId;
 import dev.syntvalley.domain.identity.VillageId;
 import dev.syntvalley.domain.need.Needs;
+import dev.syntvalley.domain.profession.CitizenProfession;
 import dev.syntvalley.domain.task.Task;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Slice 3 introduced identity/lifecycle; Slice 5 adds the deterministic living state — the citizen's
- * needs and the single active task attached directly to them. Canonical persistence authority stays
- * with the world state.
+ * Slice 3 introduced identity/lifecycle; Slice 5 added the living state (needs and the active task);
+ * Slice 6 adds an optional profession. Canonical persistence authority stays with the world state.
  */
 public record CitizenAggregate(
         CitizenId id,
@@ -23,7 +23,8 @@ public record CitizenAggregate(
         Optional<UUID> boundEntityId,
         long createdGameTime,
         Needs needs,
-        Optional<Task> activeTask
+        Optional<Task> activeTask,
+        Optional<CitizenProfession> profession
 ) {
     public CitizenAggregate {
         Objects.requireNonNull(id, "id");
@@ -33,6 +34,7 @@ public record CitizenAggregate(
         boundEntityId = Objects.requireNonNull(boundEntityId, "boundEntityId");
         Objects.requireNonNull(needs, "needs");
         activeTask = Objects.requireNonNull(activeTask, "activeTask");
+        profession = Objects.requireNonNull(profession, "profession");
 
         if (revision < 1) {
             throw new IllegalArgumentException("Citizen revision must be positive");
@@ -68,6 +70,7 @@ public record CitizenAggregate(
                 Optional.empty(),
                 gameTime,
                 Needs.full(gameTime),
+                Optional.empty(),
                 Optional.empty()
         );
     }
@@ -76,16 +79,29 @@ public record CitizenAggregate(
         return new CitizenEntityBinding(id, villageId, bindingGeneration);
     }
 
-    /** Applies a serviced simulation step (updated needs and/or active task), advancing the revision. */
-    public CitizenAggregate withSimulation(Needs updatedNeeds, Optional<Task> updatedActiveTask) {
+    /** Applies a serviced simulation step (updated needs, active task and profession progress). */
+    public CitizenAggregate withSimulation(
+            Needs updatedNeeds, Optional<Task> updatedActiveTask, Optional<CitizenProfession> updatedProfession) {
         Objects.requireNonNull(updatedNeeds, "updatedNeeds");
         Objects.requireNonNull(updatedActiveTask, "updatedActiveTask");
+        Objects.requireNonNull(updatedProfession, "updatedProfession");
         if (revision == Long.MAX_VALUE) {
             throw new IllegalStateException("Citizen revision exhausted");
         }
         return new CitizenAggregate(
                 id, villageId, revision + 1, lifecycle, name, bindingGeneration, boundEntityId,
-                createdGameTime, updatedNeeds, updatedActiveTask);
+                createdGameTime, updatedNeeds, updatedActiveTask, updatedProfession);
+    }
+
+    /** Assigns or clears the profession (administrative change), advancing the revision. */
+    public CitizenAggregate withProfession(Optional<CitizenProfession> updatedProfession) {
+        Objects.requireNonNull(updatedProfession, "updatedProfession");
+        if (revision == Long.MAX_VALUE) {
+            throw new IllegalStateException("Citizen revision exhausted");
+        }
+        return new CitizenAggregate(
+                id, villageId, revision + 1, lifecycle, name, bindingGeneration, boundEntityId,
+                createdGameTime, needs, activeTask, updatedProfession);
     }
 
     public CitizenTransitionResult reconcileEntity(CitizenEntityBinding binding, UUID entityId) {
@@ -112,17 +128,8 @@ public record CitizenAggregate(
         }
 
         return new CitizenTransitionResult.Changed(new CitizenAggregate(
-                id,
-                villageId,
-                revision + 1,
-                lifecycle,
-                name,
-                bindingGeneration,
-                Optional.of(entityId),
-                createdGameTime,
-                needs,
-                activeTask
-        ));
+                id, villageId, revision + 1, lifecycle, name, bindingGeneration, Optional.of(entityId),
+                createdGameTime, needs, activeTask, profession));
     }
 
     public CitizenTransitionResult recordDeath(UUID entityId) {
@@ -139,16 +146,7 @@ public record CitizenAggregate(
         }
 
         return new CitizenTransitionResult.Changed(new CitizenAggregate(
-                id,
-                villageId,
-                revision + 1,
-                CitizenLifecycle.DECEASED,
-                name,
-                bindingGeneration,
-                Optional.empty(),
-                createdGameTime,
-                needs,
-                Optional.empty()
-        ));
+                id, villageId, revision + 1, CitizenLifecycle.DECEASED, name, bindingGeneration, Optional.empty(),
+                createdGameTime, needs, Optional.empty(), profession));
     }
 }
