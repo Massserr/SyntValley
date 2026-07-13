@@ -1,6 +1,8 @@
 {
   "block.syntvalley.synt_core": "Synt Core",
   "block.syntvalley.village_console": "Village Console",
+  "block.syntvalley.village_storage": "Village Storage",
+  "message.syntvalley.storage.linked": "Village Storage linked.",
   "entity.syntvalley.synt_citizen": "Synt Citizen",
   "message.syntvalley.core.inspect": "Village %s — %s, revision %s",
   "message.syntvalley.core.unavailable": "This Synt Core has no available Village binding.",

@@ -3,6 +3,7 @@ package dev.syntvalley.registry;
 import dev.syntvalley.bootstrap.ProjectIdentity;
 import dev.syntvalley.content.blockentity.SyntCoreBlockEntity;
 import dev.syntvalley.content.blockentity.VillageConsoleBlockEntity;
+import dev.syntvalley.content.blockentity.VillageStorageBlockEntity;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.neoforged.neoforge.registries.DeferredHolder;
@@ -22,6 +23,13 @@ public final class ModBlockEntities {
             BLOCK_ENTITY_TYPES.register(
                     "village_console",
                     () -> BlockEntityType.Builder.of(VillageConsoleBlockEntity::new, ModBlocks.VILLAGE_CONSOLE.get())
+                            .build(null)
+            );
+
+    public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<VillageStorageBlockEntity>> VILLAGE_STORAGE =
+            BLOCK_ENTITY_TYPES.register(
+                    "village_storage",
+                    () -> BlockEntityType.Builder.of(VillageStorageBlockEntity::new, ModBlocks.VILLAGE_STORAGE.get())
                             .build(null)
             );
 

@@ -3,6 +3,7 @@ package dev.syntvalley.registry;
 import dev.syntvalley.bootstrap.ProjectIdentity;
 import dev.syntvalley.content.block.SyntCoreBlock;
 import dev.syntvalley.content.block.VillageConsoleBlock;
+import dev.syntvalley.content.block.VillageStorageBlock;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.material.MapColor;
@@ -30,6 +31,16 @@ public final class ModBlocks {
                     .mapColor(MapColor.COLOR_CYAN)
                     .strength(3.5F, 6.0F)
                     .sound(SoundType.AMETHYST)
+                    .pushReaction(PushReaction.BLOCK)
+    );
+
+    public static final DeferredBlock<VillageStorageBlock> VILLAGE_STORAGE = BLOCKS.registerBlock(
+            "village_storage",
+            VillageStorageBlock::new,
+            BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.WOOD)
+                    .strength(2.5F)
+                    .sound(SoundType.WOOD)
                     .pushReaction(PushReaction.BLOCK)
     );
 

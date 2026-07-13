@@ -32,6 +32,7 @@ public final class ModRegistries {
         if (event.getTabKey() == CreativeModeTabs.FUNCTIONAL_BLOCKS) {
             event.accept(new ItemStack(ModItems.SYNT_CORE.get()));
             event.accept(new ItemStack(ModItems.VILLAGE_CONSOLE.get()));
+            event.accept(new ItemStack(ModItems.VILLAGE_STORAGE.get()));
         }
     }
 

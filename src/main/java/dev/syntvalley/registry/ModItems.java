@@ -19,6 +19,11 @@ public final class ModItems {
             new Item.Properties()
     );
 
+    public static final DeferredItem<BlockItem> VILLAGE_STORAGE = ITEMS.registerSimpleBlockItem(
+            ModBlocks.VILLAGE_STORAGE,
+            new Item.Properties()
+    );
+
     private ModItems() {
     }
 }

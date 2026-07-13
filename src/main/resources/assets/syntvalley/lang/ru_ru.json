@@ -1,6 +1,8 @@
 {
   "block.syntvalley.synt_core": "Синт-ядро",
   "block.syntvalley.village_console": "Консоль деревни",
+  "block.syntvalley.village_storage": "Склад деревни",
+  "message.syntvalley.storage.linked": "Склад деревни привязан.",
   "entity.syntvalley.synt_citizen": "Синт-житель",
   "message.syntvalley.core.inspect": "Деревня %s — %s, ревизия %s",
   "message.syntvalley.core.unavailable": "У этого Синт-ядра нет доступной привязки к деревне.",

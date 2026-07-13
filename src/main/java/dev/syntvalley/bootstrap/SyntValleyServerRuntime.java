@@ -1,6 +1,7 @@
 package dev.syntvalley.bootstrap;
 
 import dev.syntvalley.application.port.CitizenStateRepository;
+import dev.syntvalley.application.port.ResourceSource;
 import dev.syntvalley.application.port.VillageStateRepository;
 import dev.syntvalley.application.profession.ProfessionCatalog;
 import dev.syntvalley.application.query.VillageOverviewDto;
@@ -25,6 +26,8 @@ import dev.syntvalley.domain.need.Needs;
 import dev.syntvalley.domain.profession.CitizenProfession;
 import dev.syntvalley.domain.profession.ProfessionDefinition;
 import dev.syntvalley.domain.profession.ProfessionId;
+import dev.syntvalley.domain.resource.ResourceKey;
+import dev.syntvalley.domain.resource.ResourceLedger;
 import dev.syntvalley.domain.village.CoreBinding;
 import dev.syntvalley.domain.village.CoreLocation;
 import dev.syntvalley.domain.village.VillageAggregate;
@@ -34,8 +37,12 @@ import dev.syntvalley.persistence.saveddata.PersistenceBounds;
 import dev.syntvalley.persistence.saveddata.SavedDataCitizenRepository;
 import dev.syntvalley.persistence.saveddata.SavedDataVillageRepository;
 import dev.syntvalley.persistence.saveddata.SyntValleySavedData;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import net.minecraft.server.MinecraftServer;
 
@@ -61,6 +68,7 @@ public final class SyntValleyServerRuntime {
     private final CitizenSimulationStep simulationStep =
             new CitizenSimulationStep(needDecayRates, REST_RECOVERY_PER_STEP);
     private final ProfessionCatalog professions = ProfessionCatalog.builtin();
+    private final Map<VillageId, Set<ResourceSource>> storagesByVillage = new LinkedHashMap<>();
     private final PersistenceCoordinator persistenceCoordinator;
     private boolean acceptingCommands = true;
 
@@ -262,6 +270,34 @@ public final class SyntValleyServerRuntime {
     public void closeOverview(UUID viewer) {
         assertServerThread();
         screenSessions.close(viewer);
+    }
+
+    public void registerStorage(VillageId villageId, ResourceSource source) {
+        assertServerThread();
+        Objects.requireNonNull(villageId, "villageId");
+        Objects.requireNonNull(source, "source");
+        storagesByVillage.computeIfAbsent(villageId, key -> new LinkedHashSet<>()).add(source);
+    }
+
+    public void unregisterStorage(VillageId villageId, ResourceSource source) {
+        assertServerThread();
+        Set<ResourceSource> sources = storagesByVillage.get(Objects.requireNonNull(villageId, "villageId"));
+        if (sources != null && sources.remove(source) && sources.isEmpty()) {
+            storagesByVillage.remove(villageId);
+        }
+    }
+
+    /** Aggregates the village's loaded, linked storages into a bounded ledger snapshot. */
+    public ResourceLedger buildLedger(VillageId villageId, long gameTime) {
+        assertServerThread();
+        Map<ResourceKey, Integer> totals = new LinkedHashMap<>();
+        Set<ResourceSource> sources = storagesByVillage.get(Objects.requireNonNull(villageId, "villageId"));
+        if (sources != null) {
+            for (ResourceSource source : sources) {
+                source.snapshotCounts().forEach((key, amount) -> totals.merge(key, amount, Integer::sum));
+            }
+        }
+        return new ResourceLedger(totals, gameTime);
     }
 
     public void onServerTick(long gameTime) {
