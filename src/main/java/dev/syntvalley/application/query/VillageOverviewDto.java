@@ -43,13 +43,16 @@ public record VillageOverviewDto(
             boolean present,
             int hunger,
             int rest,
-            String activity
+            String activity,
+            String profession,
+            int professionLevel
     ) {
         public CitizenOverviewEntry {
             Objects.requireNonNull(citizenId, "citizenId");
             Objects.requireNonNull(name, "name");
             Objects.requireNonNull(lifecycle, "lifecycle");
             Objects.requireNonNull(activity, "activity");
+            Objects.requireNonNull(profession, "profession");
         }
     }
 }

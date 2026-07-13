@@ -45,7 +45,9 @@ public final class VillageOverviewQuery {
                     citizen.boundEntityId().isPresent(),
                     citizen.needs().hunger(),
                     citizen.needs().rest(),
-                    citizen.activeTask().map(task -> task.kind().name()).orElse("NONE")
+                    citizen.activeTask().map(task -> task.kind().name()).orElse("NONE"),
+                    citizen.profession().map(active -> active.professionId().value()).orElse("NONE"),
+                    citizen.profession().map(active -> active.level()).orElse(0)
             ));
         }
 

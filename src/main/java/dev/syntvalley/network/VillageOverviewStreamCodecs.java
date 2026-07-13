@@ -35,6 +35,8 @@ public final class VillageOverviewStreamCodecs {
             buf.writeInt(entry.hunger());
             buf.writeInt(entry.rest());
             buf.writeUtf(entry.activity());
+            buf.writeUtf(entry.profession());
+            buf.writeInt(entry.professionLevel());
         }
     }
 
@@ -54,7 +56,7 @@ public final class VillageOverviewStreamCodecs {
         for (int index = 0; index < size; index++) {
             residents.add(new VillageOverviewDto.CitizenOverviewEntry(
                     buf.readUtf(), buf.readUtf(), buf.readUtf(), buf.readBoolean(),
-                    buf.readInt(), buf.readInt(), buf.readUtf()));
+                    buf.readInt(), buf.readInt(), buf.readUtf(), buf.readUtf(), buf.readInt()));
         }
         return new VillageOverviewDto(villageId, name, lifecycle, revision, coreBound, residentCount, residentsTruncated, residents);
     }

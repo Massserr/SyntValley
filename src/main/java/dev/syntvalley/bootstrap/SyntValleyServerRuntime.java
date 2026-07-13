@@ -2,6 +2,7 @@ package dev.syntvalley.bootstrap;
 
 import dev.syntvalley.application.port.CitizenStateRepository;
 import dev.syntvalley.application.port.VillageStateRepository;
+import dev.syntvalley.application.profession.ProfessionCatalog;
 import dev.syntvalley.application.query.VillageOverviewDto;
 import dev.syntvalley.application.query.VillageOverviewQuery;
 import dev.syntvalley.application.service.CitizenApplicationService;
@@ -21,6 +22,9 @@ import dev.syntvalley.domain.need.NeedDecayRates;
 import dev.syntvalley.domain.need.NeedKind;
 import dev.syntvalley.domain.need.NeedUpdatePolicy;
 import dev.syntvalley.domain.need.Needs;
+import dev.syntvalley.domain.profession.CitizenProfession;
+import dev.syntvalley.domain.profession.ProfessionDefinition;
+import dev.syntvalley.domain.profession.ProfessionId;
 import dev.syntvalley.domain.village.CoreBinding;
 import dev.syntvalley.domain.village.CoreLocation;
 import dev.syntvalley.domain.village.VillageAggregate;
@@ -56,6 +60,7 @@ public final class SyntValleyServerRuntime {
     private final NeedDecayRates needDecayRates = NeedDecayRates.defaults();
     private final CitizenSimulationStep simulationStep =
             new CitizenSimulationStep(needDecayRates, REST_RECOVERY_PER_STEP);
+    private final ProfessionCatalog professions = ProfessionCatalog.builtin();
     private final PersistenceCoordinator persistenceCoordinator;
     private boolean acceptingCommands = true;
 
@@ -122,7 +127,28 @@ public final class SyntValleyServerRuntime {
                     CitizenApplicationService.HireRejection.RUNTIME_STOPPING
             );
         }
-        return citizenService.hire(villageId, requestedName, gameTime);
+        CitizenApplicationService.HireResult result = citizenService.hire(villageId, requestedName, gameTime);
+        if (result instanceof CitizenApplicationService.HireResult.Hired hired) {
+            assignProfession(hired.citizen().id(), ProfessionCatalog.CARETAKER, gameTime);
+        }
+        return result;
+    }
+
+    /** Assigns a catalog profession to a citizen (server-authorized). Unknown professions are rejected. */
+    public boolean assignProfession(CitizenId citizenId, ProfessionId professionId, long gameTime) {
+        assertServerThread();
+        if (!acceptingCommands || !professions.contains(professionId)) {
+            return false;
+        }
+        Optional<CitizenAggregate> current = citizenRepository.find(citizenId);
+        if (current.isEmpty() || current.orElseThrow().lifecycle() != CitizenLifecycle.ACTIVE) {
+            return false;
+        }
+        CitizenAggregate citizen = current.orElseThrow();
+        citizenRepository.update(
+                citizen.withProfession(Optional.of(CitizenProfession.assign(professionId, gameTime))),
+                citizen.revision());
+        return true;
     }
 
     public CitizenBindingService.EnsureCitizenResult ensureCitizenBound(CitizenEntityBinding binding, UUID entityId) {
@@ -166,9 +192,9 @@ public final class SyntValleyServerRuntime {
             return;
         }
         CitizenAggregate citizen = current.orElseThrow();
-        // Profession definitions arrive with the datapack repository in a later step; until then a
-        // citizen has no work definition and the loop stays needs-driven.
-        CitizenAggregate advanced = simulationStep.advance(citizen, gameTime, TaskId::random, Optional.empty());
+        Optional<ProfessionDefinition> definition =
+                citizen.profession().flatMap(active -> professions.get(active.professionId()));
+        CitizenAggregate advanced = simulationStep.advance(citizen, gameTime, TaskId::random, definition);
         if (advanced != citizen) {
             citizenRepository.update(advanced, citizen.revision());
         }
