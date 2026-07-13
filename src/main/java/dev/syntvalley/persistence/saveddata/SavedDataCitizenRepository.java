@@ -10,6 +10,8 @@ import dev.syntvalley.domain.identity.VillageId;
 import dev.syntvalley.persistence.dirty.DirtyKey;
 import dev.syntvalley.persistence.dirty.DirtyReason;
 import dev.syntvalley.persistence.dirty.DirtyTracker;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import net.minecraft.server.MinecraftServer;
@@ -57,6 +59,41 @@ public final class SavedDataCitizenRepository implements CitizenStateRepository 
             }
         }
         return count;
+    }
+
+    @Override
+    public int countForVillage(VillageId villageId) {
+        assertServerThread();
+        Objects.requireNonNull(villageId, "villageId");
+        if (!savedData.isAvailable()) {
+            return 0;
+        }
+        int count = 0;
+        for (CitizenPersistentRecord record : savedData.stateSnapshot().citizens().values()) {
+            if (record.villageId().equals(villageId)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    @Override
+    public List<CitizenAggregate> findByVillage(VillageId villageId, int limit) {
+        assertServerThread();
+        Objects.requireNonNull(villageId, "villageId");
+        if (!savedData.isAvailable() || limit <= 0) {
+            return List.of();
+        }
+        List<CitizenAggregate> result = new ArrayList<>();
+        for (CitizenPersistentRecord record : savedData.stateSnapshot().citizens().values()) {
+            if (record.villageId().equals(villageId)) {
+                result.add(record.toAggregate());
+                if (result.size() >= limit) {
+                    break;
+                }
+            }
+        }
+        return List.copyOf(result);
     }
 
     @Override

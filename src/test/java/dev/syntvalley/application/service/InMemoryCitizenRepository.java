@@ -8,11 +8,12 @@ import dev.syntvalley.domain.citizen.CitizenLifecycle;
 import dev.syntvalley.domain.identity.CitizenId;
 import dev.syntvalley.domain.identity.VillageId;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 /** Deterministic in-memory CitizenStateRepository for pure-Java application tests. */
-final class InMemoryCitizenRepository implements CitizenStateRepository {
+public final class InMemoryCitizenRepository implements CitizenStateRepository {
     private final Map<CitizenId, CitizenAggregate> citizens = new LinkedHashMap<>();
 
     @Override
@@ -31,6 +32,24 @@ final class InMemoryCitizenRepository implements CitizenStateRepository {
                 .filter(citizen -> citizen.lifecycle() == CitizenLifecycle.ACTIVE)
                 .filter(citizen -> citizen.villageId().equals(villageId))
                 .count();
+    }
+
+    @Override
+    public int countForVillage(VillageId villageId) {
+        return (int) citizens.values().stream()
+                .filter(citizen -> citizen.villageId().equals(villageId))
+                .count();
+    }
+
+    @Override
+    public List<CitizenAggregate> findByVillage(VillageId villageId, int limit) {
+        if (limit <= 0) {
+            return List.of();
+        }
+        return citizens.values().stream()
+                .filter(citizen -> citizen.villageId().equals(villageId))
+                .limit(limit)
+                .toList();
     }
 
     @Override
