@@ -9,6 +9,7 @@ import net.minecraft.network.codec.StreamCodec;
 /** Manual StreamCodec for the overview DTO, using only primitive buffer ops to stay simple and safe. */
 public final class VillageOverviewStreamCodecs {
     private static final int MAX_ENCODED_RESIDENTS = 8192;
+    private static final int MAX_ENCODED_RESOURCES = 8192;
 
     public static final StreamCodec<RegistryFriendlyByteBuf, VillageOverviewDto> OVERVIEW = StreamCodec.of(
             VillageOverviewStreamCodecs::encode,
@@ -38,6 +39,11 @@ public final class VillageOverviewStreamCodecs {
             buf.writeUtf(entry.profession());
             buf.writeInt(entry.professionLevel());
         }
+        buf.writeInt(dto.resources().size());
+        for (VillageOverviewDto.ResourceSummaryEntry entry : dto.resources()) {
+            buf.writeUtf(entry.resource());
+            buf.writeInt(entry.count());
+        }
     }
 
     private static VillageOverviewDto decode(RegistryFriendlyByteBuf buf) {
@@ -58,6 +64,15 @@ public final class VillageOverviewStreamCodecs {
                     buf.readUtf(), buf.readUtf(), buf.readUtf(), buf.readBoolean(),
                     buf.readInt(), buf.readInt(), buf.readUtf(), buf.readUtf(), buf.readInt()));
         }
-        return new VillageOverviewDto(villageId, name, lifecycle, revision, coreBound, residentCount, residentsTruncated, residents);
+        int resourceSize = buf.readInt();
+        if (resourceSize < 0 || resourceSize > MAX_ENCODED_RESOURCES) {
+            throw new IllegalStateException("Encoded resource list is out of bounds: " + resourceSize);
+        }
+        List<VillageOverviewDto.ResourceSummaryEntry> resources = new ArrayList<>(resourceSize);
+        for (int index = 0; index < resourceSize; index++) {
+            resources.add(new VillageOverviewDto.ResourceSummaryEntry(buf.readUtf(), buf.readInt()));
+        }
+        return new VillageOverviewDto(
+                villageId, name, lifecycle, revision, coreBound, residentCount, residentsTruncated, residents, resources);
     }
 }

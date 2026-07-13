@@ -11,6 +11,7 @@ import net.neoforged.neoforge.network.PacketDistributor;
 /** Read-only Village overview. Renders the client cache; closing tells the server to drop the session. */
 public final class VillageOverviewScreen extends Screen {
     private static final int MAX_LISTED = 12;
+    private static final int MAX_RESOURCES_LISTED = 8;
 
     private final VillageOverviewCache cache = new VillageOverviewCache();
 
@@ -57,11 +58,35 @@ public final class VillageOverviewScreen extends Screen {
                             + "  (h " + entry.hunger() + ", r " + entry.rest() + ")"),
                     left, top + 46 + index * 11, 0xDDDDDD);
         }
+        int y = top + 46 + listed * 11;
         int remaining = overview.residentCount() - listed;
         if (remaining > 0) {
             graphics.drawString(this.font,
-                    Component.translatable("screen.syntvalley.village_overview.more", remaining),
-                    left, top + 46 + listed * 11, 0xAAAAAA);
+                    Component.translatable("screen.syntvalley.village_overview.more", remaining), left, y, 0xAAAAAA);
+            y += 11;
+        }
+
+        y += 6;
+        graphics.drawString(this.font,
+                Component.translatable("screen.syntvalley.village_overview.storage"), left, y, 0xFFFFFF);
+        y += 12;
+        if (overview.resources().isEmpty()) {
+            graphics.drawString(this.font,
+                    Component.translatable("screen.syntvalley.village_overview.storage.empty"), left, y, 0xAAAAAA);
+        } else {
+            int listedResources = Math.min(overview.resources().size(), MAX_RESOURCES_LISTED);
+            for (int index = 0; index < listedResources; index++) {
+                VillageOverviewDto.ResourceSummaryEntry entry = overview.resources().get(index);
+                graphics.drawString(this.font,
+                        Component.literal("• " + entry.resource() + " × " + entry.count()), left, y, 0xDDDDDD);
+                y += 11;
+            }
+            int moreResources = overview.resources().size() - listedResources;
+            if (moreResources > 0) {
+                graphics.drawString(this.font,
+                        Component.translatable("screen.syntvalley.village_overview.storage.more", moreResources),
+                        left, y, 0xAAAAAA);
+            }
         }
     }
 

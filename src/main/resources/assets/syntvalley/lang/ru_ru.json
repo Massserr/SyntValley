@@ -19,5 +19,8 @@
   "screen.syntvalley.village_overview.loading": "Загрузка…",
   "screen.syntvalley.village_overview.residents": "Жителей: %s",
   "screen.syntvalley.village_overview.more": "…и ещё %s",
+  "screen.syntvalley.village_overview.storage": "Склад",
+  "screen.syntvalley.village_overview.storage.empty": "Пусто",
+  "screen.syntvalley.village_overview.storage.more": "…и ещё %s предметов",
   "syntvalley.configuration.startup_diagnostics": "Диагностика при запуске"
 }

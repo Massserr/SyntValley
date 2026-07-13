@@ -254,7 +254,8 @@ public final class SyntValleyServerRuntime {
         if (!acceptingCommands) {
             return Optional.empty();
         }
-        Optional<VillageOverviewDto> overview = overviewQuery.overview(villageId);
+        Optional<VillageOverviewDto> overview =
+                overviewQuery.overview(villageId, buildLedger(villageId, gameTime).counts());
         if (overview.isEmpty()) {
             return Optional.empty();
         }

@@ -15,13 +15,15 @@ public record VillageOverviewDto(
         boolean coreBound,
         int residentCount,
         boolean residentsTruncated,
-        List<CitizenOverviewEntry> residents
+        List<CitizenOverviewEntry> residents,
+        List<ResourceSummaryEntry> resources
 ) {
     public VillageOverviewDto {
         Objects.requireNonNull(villageId, "villageId");
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(lifecycle, "lifecycle");
         residents = List.copyOf(Objects.requireNonNull(residents, "residents"));
+        resources = List.copyOf(Objects.requireNonNull(resources, "resources"));
         if (revision < 1) {
             throw new IllegalArgumentException("revision must be positive");
         }
@@ -53,6 +55,12 @@ public record VillageOverviewDto(
             Objects.requireNonNull(lifecycle, "lifecycle");
             Objects.requireNonNull(activity, "activity");
             Objects.requireNonNull(profession, "profession");
+        }
+    }
+
+    public record ResourceSummaryEntry(String resource, int count) {
+        public ResourceSummaryEntry {
+            Objects.requireNonNull(resource, "resource");
         }
     }
 }

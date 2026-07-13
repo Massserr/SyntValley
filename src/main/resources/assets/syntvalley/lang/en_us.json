@@ -19,5 +19,8 @@
   "screen.syntvalley.village_overview.loading": "Loading…",
   "screen.syntvalley.village_overview.residents": "Residents: %s",
   "screen.syntvalley.village_overview.more": "…and %s more",
+  "screen.syntvalley.village_overview.storage": "Storage",
+  "screen.syntvalley.village_overview.storage.empty": "Empty",
+  "screen.syntvalley.village_overview.storage.more": "…and %s more items",
   "syntvalley.configuration.startup_diagnostics": "Startup diagnostics"
 }

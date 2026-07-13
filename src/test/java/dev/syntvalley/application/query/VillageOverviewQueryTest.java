@@ -11,8 +11,11 @@ import dev.syntvalley.domain.citizen.CitizenAggregate;
 import dev.syntvalley.domain.citizen.CitizenTransitionResult;
 import dev.syntvalley.domain.identity.CitizenId;
 import dev.syntvalley.domain.identity.VillageId;
+import dev.syntvalley.domain.resource.ResourceKey;
 import dev.syntvalley.domain.village.CoreLocation;
 import dev.syntvalley.domain.village.VillageAggregate;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -38,7 +41,7 @@ class VillageOverviewQueryTest {
 
         VillageOverviewQuery query = new VillageOverviewQuery(
                 new StubVillages(VillageAggregate.create(VILLAGE, "Village", LOCATION, 0)), citizens);
-        VillageOverviewDto dto = query.overview(VILLAGE).orElseThrow();
+        VillageOverviewDto dto = query.overview(VILLAGE, Map.of()).orElseThrow();
 
         assertEquals(VILLAGE.toString(), dto.villageId());
         assertEquals("ACTIVE", dto.lifecycle());
@@ -59,7 +62,7 @@ class VillageOverviewQueryTest {
 
         VillageOverviewQuery query = new VillageOverviewQuery(
                 new StubVillages(VillageAggregate.create(VILLAGE, "Village", LOCATION, 0)), citizens);
-        VillageOverviewDto dto = query.overview(VILLAGE).orElseThrow();
+        VillageOverviewDto dto = query.overview(VILLAGE, Map.of()).orElseThrow();
 
         assertEquals(VillageOverviewQuery.MAX_OVERVIEW_RESIDENTS + 5, dto.residentCount());
         assertEquals(VillageOverviewQuery.MAX_OVERVIEW_RESIDENTS, dto.residents().size());
@@ -69,7 +72,27 @@ class VillageOverviewQueryTest {
     @Test
     void overviewMissingVillageIsEmpty() {
         VillageOverviewQuery query = new VillageOverviewQuery(new StubVillages(null), new InMemoryCitizenRepository());
-        assertTrue(query.overview(VILLAGE).isEmpty());
+        assertTrue(query.overview(VILLAGE, Map.of()).isEmpty());
+    }
+
+    @Test
+    void overviewSummarisesResourcesSortedByKeyDroppingEmpties() {
+        VillageOverviewQuery query = new VillageOverviewQuery(
+                new StubVillages(VillageAggregate.create(VILLAGE, "Village", LOCATION, 0)),
+                new InMemoryCitizenRepository());
+
+        Map<ResourceKey, Integer> counts = new LinkedHashMap<>();
+        counts.put(new ResourceKey("minecraft:wheat"), 12);
+        counts.put(new ResourceKey("minecraft:bread"), 4);
+        counts.put(new ResourceKey("minecraft:apple"), 0);
+
+        VillageOverviewDto dto = query.overview(VILLAGE, counts).orElseThrow();
+
+        assertEquals(2, dto.resources().size());
+        assertEquals("minecraft:bread", dto.resources().get(0).resource());
+        assertEquals(4, dto.resources().get(0).count());
+        assertEquals("minecraft:wheat", dto.resources().get(1).resource());
+        assertEquals(12, dto.resources().get(1).count());
     }
 
     private static final class StubVillages implements VillageStateRepository {
