@@ -3,7 +3,14 @@ package dev.syntvalley.persistence.codec;
 import dev.syntvalley.domain.citizen.CitizenConstraints;
 import dev.syntvalley.domain.citizen.CitizenLifecycle;
 import dev.syntvalley.domain.identity.CitizenId;
+import dev.syntvalley.domain.identity.TaskId;
 import dev.syntvalley.domain.identity.VillageId;
+import dev.syntvalley.domain.need.NeedBounds;
+import dev.syntvalley.domain.need.Needs;
+import dev.syntvalley.domain.task.Task;
+import dev.syntvalley.domain.task.TaskFailureReason;
+import dev.syntvalley.domain.task.TaskKind;
+import dev.syntvalley.domain.task.TaskState;
 import dev.syntvalley.domain.village.CoreLocation;
 import dev.syntvalley.domain.village.VillageConstraints;
 import dev.syntvalley.domain.village.VillageLifecycle;
@@ -68,7 +75,20 @@ public final class WorldStateCodec {
             "name",
             "binding_generation",
             "bound_entity_id",
-            "created_game_time"
+            "created_game_time",
+            "needs",
+            "active_task"
+    );
+    private static final Set<String> NEEDS_KEYS = Set.of("last_updated_game_time", "hunger", "rest");
+    private static final Set<String> TASK_KEYS = Set.of(
+            "id",
+            "kind",
+            "state",
+            "attempt",
+            "created_game_time",
+            "lease_expiry_game_time",
+            "failure_reason",
+            "not_before_game_time"
     );
 
     private WorldStateCodec() {
@@ -330,6 +350,29 @@ public final class WorldStateCodec {
         tag.putInt("binding_generation", citizen.bindingGeneration());
         citizen.boundEntityId().ifPresent(entityId -> tag.putUUID("bound_entity_id", entityId));
         tag.putLong("created_game_time", citizen.createdGameTime());
+        tag.put("needs", encodeNeeds(citizen.needs()));
+        citizen.activeTask().ifPresent(task -> tag.put("active_task", encodeTask(task)));
+        return tag;
+    }
+
+    private static CompoundTag encodeNeeds(Needs needs) {
+        CompoundTag tag = new CompoundTag();
+        tag.putLong("last_updated_game_time", needs.lastUpdatedGameTime());
+        tag.putInt("hunger", needs.hunger());
+        tag.putInt("rest", needs.rest());
+        return tag;
+    }
+
+    private static CompoundTag encodeTask(Task task) {
+        CompoundTag tag = new CompoundTag();
+        tag.putUUID("id", task.id().value());
+        tag.putString("kind", task.kind().name());
+        tag.putString("state", task.state().name());
+        tag.putInt("attempt", task.attempt());
+        tag.putLong("created_game_time", task.createdGameTime());
+        tag.putLong("lease_expiry_game_time", task.leaseExpiryGameTime());
+        task.failureReason().ifPresent(reason -> tag.putString("failure_reason", reason.name()));
+        tag.putLong("not_before_game_time", task.notBeforeGameTime());
         return tag;
     }
 
@@ -369,17 +412,86 @@ public final class WorldStateCodec {
 
         long createdGameTime = requireNonNegativeLong(tag, "created_game_time", path + ".created_game_time");
 
+        CitizenId citizenId = new CitizenId(tag.getUUID("id"));
+
+        Needs needs = tag.contains("needs")
+                ? decodeNeeds(requireCompound(tag, "needs", path + ".needs"), path + ".needs")
+                : Needs.full(createdGameTime);
+
+        Optional<Task> activeTask = Optional.empty();
+        if (tag.contains("active_task")) {
+            activeTask = Optional.of(decodeTask(
+                    requireCompound(tag, "active_task", path + ".active_task"), citizenId, path + ".active_task"));
+        }
+
         try {
             return new CitizenPersistentRecord(
-                    new CitizenId(tag.getUUID("id")),
+                    citizenId,
                     new VillageId(tag.getUUID("village_id")),
                     revision,
                     lifecycle,
                     name,
                     bindingGeneration,
                     boundEntityId,
-                    createdGameTime
+                    createdGameTime,
+                    needs,
+                    activeTask
             );
+        } catch (IllegalArgumentException exception) {
+            throw new PersistenceException(path, exception.getMessage());
+        }
+    }
+
+    private static Needs decodeNeeds(CompoundTag tag, String path) {
+        requireNoUnknownKeys(tag, NEEDS_KEYS, path);
+        long lastUpdated = requireNonNegativeLong(tag, "last_updated_game_time", path + ".last_updated_game_time");
+        int hunger = requireBoundedInt(tag, "hunger", path + ".hunger", NeedBounds.MIN, NeedBounds.MAX);
+        int rest = requireBoundedInt(tag, "rest", path + ".rest", NeedBounds.MIN, NeedBounds.MAX);
+        try {
+            return new Needs(hunger, rest, lastUpdated);
+        } catch (IllegalArgumentException exception) {
+            throw new PersistenceException(path, exception.getMessage());
+        }
+    }
+
+    private static Task decodeTask(CompoundTag tag, CitizenId citizenId, String path) {
+        requireNoUnknownKeys(tag, TASK_KEYS, path);
+        if (!tag.hasUUID("id")) {
+            throw new PersistenceException(path + ".id", "missing or invalid UUID representation");
+        }
+
+        TaskKind kind;
+        try {
+            kind = TaskKind.valueOf(requireString(tag, "kind", path + ".kind"));
+        } catch (IllegalArgumentException exception) {
+            throw new PersistenceException(path + ".kind", "unknown task kind");
+        }
+        TaskState state;
+        try {
+            state = TaskState.valueOf(requireString(tag, "state", path + ".state"));
+        } catch (IllegalArgumentException exception) {
+            throw new PersistenceException(path + ".state", "unknown task state");
+        }
+
+        int attempt = requireBoundedInt(tag, "attempt", path + ".attempt", 0, Integer.MAX_VALUE);
+        long created = requireNonNegativeLong(tag, "created_game_time", path + ".created_game_time");
+        long lease = requireNonNegativeLong(tag, "lease_expiry_game_time", path + ".lease_expiry_game_time");
+        long notBefore = requireNonNegativeLong(tag, "not_before_game_time", path + ".not_before_game_time");
+
+        Optional<TaskFailureReason> failureReason = Optional.empty();
+        if (tag.contains("failure_reason")) {
+            try {
+                failureReason = Optional.of(
+                        TaskFailureReason.valueOf(requireString(tag, "failure_reason", path + ".failure_reason")));
+            } catch (IllegalArgumentException exception) {
+                throw new PersistenceException(path + ".failure_reason", "unknown failure reason");
+            }
+        }
+
+        try {
+            return new Task(
+                    new TaskId(tag.getUUID("id")), citizenId, kind, state, attempt, created, lease, failureReason,
+                    notBefore);
         } catch (IllegalArgumentException exception) {
             throw new PersistenceException(path, exception.getMessage());
         }

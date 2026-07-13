@@ -2,14 +2,16 @@ package dev.syntvalley.domain.citizen;
 
 import dev.syntvalley.domain.identity.CitizenId;
 import dev.syntvalley.domain.identity.VillageId;
+import dev.syntvalley.domain.need.Needs;
+import dev.syntvalley.domain.task.Task;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Minimal Slice 3 Citizen aggregate. Canonical identity, village ownership and lifecycle live here;
- * the Minecraft entity is only a presence of this record. Later slices add profession, needs, mood,
- * memory and task refs without moving persistence authority.
+ * Slice 3 introduced identity/lifecycle; Slice 5 adds the deterministic living state — the citizen's
+ * needs and the single active task attached directly to them. Canonical persistence authority stays
+ * with the world state.
  */
 public record CitizenAggregate(
         CitizenId id,
@@ -19,7 +21,9 @@ public record CitizenAggregate(
         String name,
         int bindingGeneration,
         Optional<UUID> boundEntityId,
-        long createdGameTime
+        long createdGameTime,
+        Needs needs,
+        Optional<Task> activeTask
 ) {
     public CitizenAggregate {
         Objects.requireNonNull(id, "id");
@@ -27,6 +31,8 @@ public record CitizenAggregate(
         Objects.requireNonNull(lifecycle, "lifecycle");
         Objects.requireNonNull(name, "name");
         boundEntityId = Objects.requireNonNull(boundEntityId, "boundEntityId");
+        Objects.requireNonNull(needs, "needs");
+        activeTask = Objects.requireNonNull(activeTask, "activeTask");
 
         if (revision < 1) {
             throw new IllegalArgumentException("Citizen revision must be positive");
@@ -43,6 +49,12 @@ public record CitizenAggregate(
         if (lifecycle == CitizenLifecycle.DECEASED && boundEntityId.isPresent()) {
             throw new IllegalArgumentException("Deceased Citizen cannot retain a bound entity");
         }
+        if (lifecycle == CitizenLifecycle.DECEASED && activeTask.isPresent()) {
+            throw new IllegalArgumentException("Deceased Citizen cannot retain an active task");
+        }
+        if (activeTask.isPresent() && !activeTask.orElseThrow().citizenId().equals(id)) {
+            throw new IllegalArgumentException("Active task belongs to a different Citizen");
+        }
     }
 
     public static CitizenAggregate create(CitizenId id, VillageId villageId, String name, long gameTime) {
@@ -54,7 +66,9 @@ public record CitizenAggregate(
                 name,
                 1,
                 Optional.empty(),
-                gameTime
+                gameTime,
+                Needs.full(gameTime),
+                Optional.empty()
         );
     }
 
@@ -62,11 +76,18 @@ public record CitizenAggregate(
         return new CitizenEntityBinding(id, villageId, bindingGeneration);
     }
 
-    /**
-     * Reconciles a loaded/spawned entity against this record. The first entity to reconcile claims
-     * presence; a different entity presenting the same identity is a duplicate and is rejected so it
-     * can be quarantined instead of splitting the identity.
-     */
+    /** Applies a serviced simulation step (updated needs and/or active task), advancing the revision. */
+    public CitizenAggregate withSimulation(Needs updatedNeeds, Optional<Task> updatedActiveTask) {
+        Objects.requireNonNull(updatedNeeds, "updatedNeeds");
+        Objects.requireNonNull(updatedActiveTask, "updatedActiveTask");
+        if (revision == Long.MAX_VALUE) {
+            throw new IllegalStateException("Citizen revision exhausted");
+        }
+        return new CitizenAggregate(
+                id, villageId, revision + 1, lifecycle, name, bindingGeneration, boundEntityId,
+                createdGameTime, updatedNeeds, updatedActiveTask);
+    }
+
     public CitizenTransitionResult reconcileEntity(CitizenEntityBinding binding, UUID entityId) {
         Objects.requireNonNull(binding, "binding");
         Objects.requireNonNull(entityId, "entityId");
@@ -98,14 +119,12 @@ public record CitizenAggregate(
                 name,
                 bindingGeneration,
                 Optional.of(entityId),
-                createdGameTime
+                createdGameTime,
+                needs,
+                activeTask
         ));
     }
 
-    /**
-     * Records the death of the bound entity. Death does not auto-respawn or delete the record; the
-     * Citizen becomes DECEASED so a later hire never accidentally revives this identity.
-     */
     public CitizenTransitionResult recordDeath(UUID entityId) {
         Objects.requireNonNull(entityId, "entityId");
 
@@ -127,7 +146,9 @@ public record CitizenAggregate(
                 name,
                 bindingGeneration,
                 Optional.empty(),
-                createdGameTime
+                createdGameTime,
+                needs,
+                Optional.empty()
         ));
     }
 }
