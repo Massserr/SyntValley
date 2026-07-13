@@ -5,5 +5,7 @@ public enum TaskFailureReason {
     TARGET_UNLOADED,
     TIMEOUT,
     OBSTRUCTED,
-    SUPERSEDED
+    SUPERSEDED,
+    /** The ledger promised a resource that the physical inventory no longer held at execution time. */
+    STALE_RESOURCE_VIEW
 }
