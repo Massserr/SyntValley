@@ -10,15 +10,22 @@ import dev.syntvalley.domain.identity.TaskId;
 import dev.syntvalley.domain.identity.VillageId;
 import dev.syntvalley.domain.need.NeedDecayRates;
 import dev.syntvalley.domain.need.Needs;
+import dev.syntvalley.domain.profession.CitizenProfession;
+import dev.syntvalley.domain.profession.ProfessionDefinition;
+import dev.syntvalley.domain.profession.ProfessionId;
 import dev.syntvalley.domain.task.Task;
 import dev.syntvalley.domain.task.TaskKind;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class CitizenSimulationStepTest {
     private static final CitizenId CITIZEN = new CitizenId(UUID.fromString("11111111-1111-1111-1111-111111111111"));
     private static final VillageId VILLAGE = new VillageId(UUID.fromString("22222222-2222-2222-2222-222222222222"));
+    private static final ProfessionId CARETAKER = new ProfessionId("syntvalley:caretaker");
+    private static final ProfessionDefinition CARETAKER_DEFINITION =
+            new ProfessionDefinition(CARETAKER, 1, Set.of(TaskKind.WORK), 1000, 5);
 
     private final CitizenSimulationStep step = new CitizenSimulationStep(new NeedDecayRates(100, 5, 3), 40);
 
@@ -28,7 +35,7 @@ class CitizenSimulationStepTest {
 
     @Test
     void calmCitizenDecaysAndIdles() {
-        CitizenAggregate advanced = step.advance(freshCitizen(), 1000, TaskId::random);
+        CitizenAggregate advanced = step.advance(freshCitizen(), 1000, TaskId::random, Optional.empty());
 
         assertEquals(950, advanced.needs().hunger());
         assertEquals(970, advanced.needs().rest());
@@ -37,7 +44,7 @@ class CitizenSimulationStepTest {
 
     @Test
     void criticalHungerRequestsFood() {
-        CitizenAggregate advanced = step.advance(freshCitizen(), 16_000, TaskId::random);
+        CitizenAggregate advanced = step.advance(freshCitizen(), 16_000, TaskId::random, Optional.empty());
 
         assertEquals(200, advanced.needs().hunger());
         assertEquals(520, advanced.needs().rest());
@@ -51,7 +58,7 @@ class CitizenSimulationStepTest {
                 Optional.of(Task.create(TaskId.random(), CITIZEN, TaskKind.REST, 0)),
                 Optional.empty());
 
-        CitizenAggregate rested = step.advance(tired, 100, TaskId::random);
+        CitizenAggregate rested = step.advance(tired, 100, TaskId::random, Optional.empty());
 
         assertEquals(187, rested.needs().rest(), "decays 3 then recovers 40 while resting");
         assertEquals(TaskKind.REST, rested.activeTask().orElseThrow().kind(), "keeps resting while still critical");
@@ -59,8 +66,22 @@ class CitizenSimulationStepTest {
     }
 
     @Test
+    void workingCitizenRunsShiftsAndGainsExperience() {
+        CitizenAggregate worker = freshCitizen()
+                .withProfession(Optional.of(CitizenProfession.assign(CARETAKER, 0)));
+
+        CitizenAggregate working = step.advance(worker, 100, TaskId::random, Optional.of(CARETAKER_DEFINITION));
+        assertEquals(TaskKind.WORK, working.activeTask().orElseThrow().kind(), "a calm caretaker starts working");
+
+        CitizenAggregate afterShift = step.advance(working, 100 + 200, TaskId::random, Optional.of(CARETAKER_DEFINITION));
+        assertEquals(TaskKind.IDLE, afterShift.activeTask().orElseThrow().kind(), "a finished shift rests before the next");
+        assertTrue(afterShift.profession().orElseThrow().experience() > 0, "the shift granted experience");
+    }
+
+    @Test
     void repeatedStepWithoutElapsedTimeIsANoOp() {
-        CitizenAggregate advanced = step.advance(freshCitizen(), 16_000, TaskId::random);
-        assertSame(advanced, step.advance(advanced, 16_000, TaskId::random), "no elapsed time and same plan is a no-op");
+        CitizenAggregate advanced = step.advance(freshCitizen(), 16_000, TaskId::random, Optional.empty());
+        assertSame(advanced, step.advance(advanced, 16_000, TaskId::random, Optional.empty()),
+                "no elapsed time and same plan is a no-op");
     }
 }

@@ -166,7 +166,9 @@ public final class SyntValleyServerRuntime {
             return;
         }
         CitizenAggregate citizen = current.orElseThrow();
-        CitizenAggregate advanced = simulationStep.advance(citizen, gameTime, TaskId::random);
+        // Profession definitions arrive with the datapack repository in a later step; until then a
+        // citizen has no work definition and the loop stays needs-driven.
+        CitizenAggregate advanced = simulationStep.advance(citizen, gameTime, TaskId::random, Optional.empty());
         if (advanced != citizen) {
             citizenRepository.update(advanced, citizen.revision());
         }
