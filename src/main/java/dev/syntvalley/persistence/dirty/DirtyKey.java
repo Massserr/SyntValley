@@ -2,6 +2,7 @@ package dev.syntvalley.persistence.dirty;
 
 import dev.syntvalley.domain.identity.CitizenId;
 import dev.syntvalley.domain.identity.VillageId;
+import dev.syntvalley.domain.project.ProjectId;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -18,5 +19,9 @@ public record DirtyKey(DirtyKind kind, UUID id) {
 
     public static DirtyKey citizen(CitizenId citizenId) {
         return new DirtyKey(DirtyKind.CITIZEN, Objects.requireNonNull(citizenId, "citizenId").value());
+    }
+
+    public static DirtyKey project(ProjectId projectId) {
+        return new DirtyKey(DirtyKind.PROJECT, Objects.requireNonNull(projectId, "projectId").value());
     }
 }

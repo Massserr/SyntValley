@@ -3,6 +3,7 @@ package dev.syntvalley.bootstrap;
 import dev.syntvalley.application.building.BuildingCatalog;
 import dev.syntvalley.application.building.PlacementPlanner;
 import dev.syntvalley.application.port.CitizenStateRepository;
+import dev.syntvalley.application.port.ProjectStateRepository;
 import dev.syntvalley.application.port.ResourceSource;
 import dev.syntvalley.application.port.ResourceWithdrawal;
 import dev.syntvalley.application.port.VillageStateRepository;
@@ -56,11 +57,11 @@ import dev.syntvalley.persistence.dirty.DirtyTracker;
 import dev.syntvalley.persistence.dirty.PersistenceCoordinator;
 import dev.syntvalley.persistence.saveddata.PersistenceBounds;
 import dev.syntvalley.persistence.saveddata.SavedDataCitizenRepository;
+import dev.syntvalley.persistence.saveddata.SavedDataProjectRepository;
 import dev.syntvalley.persistence.saveddata.SavedDataVillageRepository;
 import dev.syntvalley.persistence.saveddata.SyntValleySavedData;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -112,7 +113,7 @@ public final class SyntValleyServerRuntime {
             new ResourceApplicationService(NutritionCatalog.builtin(), new MealPlanner(FOOD_EAT_THRESHOLD));
     private final ProjectApplicationService projectService =
             new ProjectApplicationService(PlacementPlanner.defaults(), ProjectId::random);
-    private final Map<ProjectId, BuildProject> projects = new LinkedHashMap<>();
+    private final ProjectStateRepository projectRepository;
     private long overviewSnapshotSeq;
     private final PersistenceCoordinator persistenceCoordinator;
     private boolean acceptingCommands = true;
@@ -125,6 +126,7 @@ public final class SyntValleyServerRuntime {
         VillageApplicationService villageService = new VillageApplicationService(villageRepository, VillageId::random);
         this.coreBindingService = new CoreBindingService(villageRepository, villageService);
         this.citizenRepository = new SavedDataCitizenRepository(server, savedData, dirtyTracker);
+        this.projectRepository = new SavedDataProjectRepository(server, savedData, dirtyTracker);
         this.citizenService = new CitizenApplicationService(citizenRepository, villageRepository, CitizenId::random);
         this.citizenBindingService = new CitizenBindingService(citizenRepository);
         this.overviewQuery = new VillageOverviewQuery(villageRepository, citizenRepository);
@@ -428,7 +430,7 @@ public final class SyntValleyServerRuntime {
 
     /** A short human-readable status of the village's one active project, or empty when there is none. */
     private String activeProjectStatus(VillageId villageId) {
-        for (BuildProject project : projects.values()) {
+        for (BuildProject project : projectRepository.all()) {
             if (project.villageId().equals(villageId) && !project.state().isTerminal()) {
                 String base = project.state().name() + " " + project.placedBlocks() + "/" + project.totalBlocks();
                 return project.pauseReason().map(reason -> base + " (" + reason.name() + ")").orElse(base);
@@ -485,21 +487,22 @@ public final class SyntValleyServerRuntime {
                 villageId, level.dimension().location().toString(),
                 corePos.getX(), corePos.getY(), corePos.getZ(), templateId, world);
         if (result instanceof ProposeResult.Proposed proposed) {
-            projects.put(proposed.project().id(), proposed.project());
+            projectRepository.create(proposed.project());
         }
         return result;
     }
 
-    /** Advances one project by a single bounded step (stage materials, then place one block). */
+    /** Advances one project by a single bounded step (stage materials, then place one block), persisted. */
     public void advanceProject(ProjectId projectId, long gameTime) {
         assertServerThread();
         if (!acceptingCommands) {
             return;
         }
-        BuildProject project = projects.get(Objects.requireNonNull(projectId, "projectId"));
-        if (project == null || project.state().isTerminal()) {
+        Optional<BuildProject> found = projectRepository.find(Objects.requireNonNull(projectId, "projectId"));
+        if (found.isEmpty() || found.orElseThrow().state().isTerminal()) {
             return;
         }
+        BuildProject project = found.orElseThrow();
         ServerLevel level = resolveLevel(project.placement().dimensionId());
         if (level == null) {
             return; // the project's dimension is not loaded; try again later
@@ -508,17 +511,22 @@ public final class SyntValleyServerRuntime {
         VillageId villageId = project.villageId();
         ResourceLedger ledger = buildLedger(villageId, gameTime);
         ResourceWithdrawal withdrawal = (key, amount) -> withdrawFromVillage(villageId, key, amount);
-        projects.put(projectId, projectService.advance(project, ledger, withdrawal, world));
+        BuildProject updated = projectService.advance(project, ledger, withdrawal, world);
+        if (updated != project) {
+            projectRepository.update(updated, project.revision());
+        }
     }
 
     public Optional<BuildProject> inspectProject(ProjectId projectId) {
         assertServerThread();
-        return Optional.ofNullable(projects.get(Objects.requireNonNull(projectId, "projectId")));
+        return projectRepository.find(Objects.requireNonNull(projectId, "projectId"));
     }
 
     private void advanceActiveProjects(long gameTime) {
-        for (ProjectId projectId : List.copyOf(projects.keySet())) {
-            advanceProject(projectId, gameTime);
+        for (BuildProject project : projectRepository.all()) {
+            if (!project.state().isTerminal()) {
+                advanceProject(project.id(), gameTime);
+            }
         }
     }
 

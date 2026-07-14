@@ -1,5 +1,8 @@
 package dev.syntvalley.persistence.codec;
 
+import dev.syntvalley.domain.building.BuildingTemplateId;
+import dev.syntvalley.domain.building.Rotation;
+import dev.syntvalley.domain.building.SitePlacement;
 import dev.syntvalley.domain.citizen.CitizenConstraints;
 import dev.syntvalley.domain.citizen.CitizenLifecycle;
 import dev.syntvalley.domain.identity.CitizenId;
@@ -9,6 +12,9 @@ import dev.syntvalley.domain.need.NeedBounds;
 import dev.syntvalley.domain.need.Needs;
 import dev.syntvalley.domain.profession.CitizenProfession;
 import dev.syntvalley.domain.profession.ProfessionId;
+import dev.syntvalley.domain.project.ProjectId;
+import dev.syntvalley.domain.project.ProjectPauseReason;
+import dev.syntvalley.domain.project.ProjectState;
 import dev.syntvalley.domain.task.Task;
 import dev.syntvalley.domain.task.TaskFailureReason;
 import dev.syntvalley.domain.task.TaskKind;
@@ -19,6 +25,7 @@ import dev.syntvalley.domain.village.VillageLifecycle;
 import dev.syntvalley.persistence.migration.MigrationRegistry;
 import dev.syntvalley.persistence.saveddata.CitizenPersistentRecord;
 import dev.syntvalley.persistence.saveddata.PersistenceBounds;
+import dev.syntvalley.persistence.saveddata.ProjectPersistentRecord;
 import dev.syntvalley.persistence.saveddata.VillagePersistentRecord;
 import dev.syntvalley.persistence.saveddata.VillagePolicyRecord;
 import dev.syntvalley.persistence.saveddata.VillagePrioritiesRecord;
@@ -95,6 +102,19 @@ public final class WorldStateCodec {
             "failure_reason",
             "not_before_game_time"
     );
+    private static final Set<String> PROJECT_KEYS = Set.of(
+            "id",
+            "village_id",
+            "template_id",
+            "template_version",
+            "placement",
+            "state",
+            "placed_blocks",
+            "total_blocks",
+            "pause_reason",
+            "revision"
+    );
+    private static final Set<String> PLACEMENT_KEYS = Set.of("dimension", "x", "y", "z", "rotation", "plan_hash");
 
     private WorldStateCodec() {
     }
@@ -128,7 +148,12 @@ public final class WorldStateCodec {
         root.put("citizens", citizens);
 
         root.put("tasks", new ListTag());
-        root.put("projects", new ListTag());
+        ListTag projects = new ListTag();
+        state.projects().values().stream()
+                .sorted((left, right) -> left.id().toString().compareTo(right.id().toString()))
+                .map(WorldStateCodec::encodeProject)
+                .forEach(projects::add);
+        root.put("projects", projects);
         root.put("memories", new ListTag());
         root.put("decisions", new ListTag());
         return root;
@@ -179,7 +204,19 @@ public final class WorldStateCodec {
         }
 
         requireEmptyList(root, "tasks", "tasks");
-        requireEmptyList(root, "projects", "projects");
+
+        ListTag projectsTag = requireCompoundList(root, "projects", "projects");
+        if (projectsTag.size() > PersistenceBounds.MAX_PROJECTS) {
+            throw new PersistenceException("projects", "collection exceeds " + PersistenceBounds.MAX_PROJECTS);
+        }
+        LinkedHashMap<ProjectId, ProjectPersistentRecord> projects = new LinkedHashMap<>();
+        for (int index = 0; index < projectsTag.size(); index++) {
+            ProjectPersistentRecord project = decodeProject(projectsTag.getCompound(index), "projects[" + index + "]");
+            if (projects.putIfAbsent(project.id(), project) != null) {
+                throw new PersistenceException("projects[" + index + "].id", "duplicate Project ID");
+            }
+        }
+
         requireEmptyList(root, "memories", "memories");
         requireEmptyList(root, "decisions", "decisions");
 
@@ -190,7 +227,8 @@ public final class WorldStateCodec {
                     createdAtEpochMs,
                     lastFlushGameTime,
                     villages,
-                    citizens
+                    citizens,
+                    projects
             );
         } catch (IllegalArgumentException exception) {
             throw new PersistenceException("root", exception.getMessage());
@@ -530,6 +568,103 @@ public final class WorldStateCodec {
             return new Task(
                     new TaskId(tag.getUUID("id")), citizenId, kind, state, attempt, created, lease, failureReason,
                     notBefore);
+        } catch (IllegalArgumentException exception) {
+            throw new PersistenceException(path, exception.getMessage());
+        }
+    }
+
+    private static CompoundTag encodeProject(ProjectPersistentRecord project) {
+        CompoundTag tag = new CompoundTag();
+        tag.putUUID("id", project.id().value());
+        tag.putUUID("village_id", project.villageId().value());
+        tag.putString("template_id", project.templateId().value());
+        tag.putInt("template_version", project.templateVersion());
+
+        SitePlacement placement = project.placement();
+        CompoundTag placementTag = new CompoundTag();
+        placementTag.putString("dimension", placement.dimensionId());
+        placementTag.putInt("x", placement.originX());
+        placementTag.putInt("y", placement.originY());
+        placementTag.putInt("z", placement.originZ());
+        placementTag.putString("rotation", placement.rotation().name());
+        placementTag.putLong("plan_hash", placement.planHash());
+        tag.put("placement", placementTag);
+
+        tag.putString("state", project.state().name());
+        tag.putInt("placed_blocks", project.placedBlocks());
+        tag.putInt("total_blocks", project.totalBlocks());
+        project.pauseReason().ifPresent(reason -> tag.putString("pause_reason", reason.name()));
+        tag.putLong("revision", project.revision());
+        return tag;
+    }
+
+    private static ProjectPersistentRecord decodeProject(CompoundTag tag, String path) {
+        requireNoUnknownKeys(tag, PROJECT_KEYS, path);
+        if (!tag.hasUUID("id")) {
+            throw new PersistenceException(path + ".id", "missing or invalid UUID representation");
+        }
+        if (!tag.hasUUID("village_id")) {
+            throw new PersistenceException(path + ".village_id", "missing or invalid UUID representation");
+        }
+
+        String templateId = requireString(tag, "template_id", path + ".template_id");
+        if (!BuildingTemplateId.isValid(templateId)) {
+            throw new PersistenceException(path + ".template_id", "invalid template id");
+        }
+        int templateVersion = requirePositiveInt(tag, "template_version", path + ".template_version");
+
+        CompoundTag placementTag = requireCompound(tag, "placement", path + ".placement");
+        requireNoUnknownKeys(placementTag, PLACEMENT_KEYS, path + ".placement");
+        String dimension = requireString(placementTag, "dimension", path + ".placement.dimension");
+        int x = requireInt(placementTag, "x", path + ".placement.x");
+        int y = requireInt(placementTag, "y", path + ".placement.y");
+        int z = requireInt(placementTag, "z", path + ".placement.z");
+        Rotation rotation;
+        try {
+            rotation = Rotation.valueOf(requireString(placementTag, "rotation", path + ".placement.rotation"));
+        } catch (IllegalArgumentException exception) {
+            throw new PersistenceException(path + ".placement.rotation", "unknown rotation");
+        }
+        long planHash = requireLong(placementTag, "plan_hash", path + ".placement.plan_hash");
+        SitePlacement placement;
+        try {
+            placement = new SitePlacement(dimension, x, y, z, rotation, planHash);
+        } catch (IllegalArgumentException exception) {
+            throw new PersistenceException(path + ".placement", exception.getMessage());
+        }
+
+        ProjectState state;
+        try {
+            state = ProjectState.valueOf(requireString(tag, "state", path + ".state"));
+        } catch (IllegalArgumentException exception) {
+            throw new PersistenceException(path + ".state", "unknown project state");
+        }
+        int placedBlocks = requireBoundedInt(tag, "placed_blocks", path + ".placed_blocks", 0, Integer.MAX_VALUE);
+        int totalBlocks = requirePositiveInt(tag, "total_blocks", path + ".total_blocks");
+        long revision = requirePositiveLong(tag, "revision", path + ".revision");
+
+        Optional<ProjectPauseReason> pauseReason = Optional.empty();
+        if (tag.contains("pause_reason")) {
+            try {
+                pauseReason = Optional.of(
+                        ProjectPauseReason.valueOf(requireString(tag, "pause_reason", path + ".pause_reason")));
+            } catch (IllegalArgumentException exception) {
+                throw new PersistenceException(path + ".pause_reason", "unknown pause reason");
+            }
+        }
+
+        try {
+            return new ProjectPersistentRecord(
+                    new ProjectId(tag.getUUID("id")),
+                    new VillageId(tag.getUUID("village_id")),
+                    new BuildingTemplateId(templateId),
+                    templateVersion,
+                    placement,
+                    state,
+                    placedBlocks,
+                    totalBlocks,
+                    pauseReason,
+                    revision);
         } catch (IllegalArgumentException exception) {
             throw new PersistenceException(path, exception.getMessage());
         }

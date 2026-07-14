@@ -4,14 +4,23 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.syntvalley.domain.building.BuildingTemplateId;
+import dev.syntvalley.domain.building.Rotation;
+import dev.syntvalley.domain.building.SitePlacement;
 import dev.syntvalley.domain.citizen.CitizenAggregate;
 import dev.syntvalley.domain.citizen.CitizenTransitionResult;
 import dev.syntvalley.domain.identity.CitizenId;
 import dev.syntvalley.domain.identity.VillageId;
+import dev.syntvalley.domain.project.BuildProject;
+import dev.syntvalley.domain.project.ProjectId;
+import dev.syntvalley.domain.project.ProjectPauseReason;
+import dev.syntvalley.domain.project.ProjectState;
+import dev.syntvalley.domain.project.ProjectTransitionResult;
 import dev.syntvalley.domain.village.CoreLocation;
 import dev.syntvalley.domain.village.VillageAggregate;
 import dev.syntvalley.persistence.migration.MigrationRegistry;
 import dev.syntvalley.persistence.saveddata.CitizenPersistentRecord;
+import dev.syntvalley.persistence.saveddata.ProjectPersistentRecord;
 import dev.syntvalley.persistence.saveddata.VillagePersistentRecord;
 import dev.syntvalley.persistence.saveddata.WorldState;
 import java.util.Map;
@@ -30,6 +39,7 @@ class WorldStateCodecTest {
                 0,
                 1_783_620_000_000L,
                 0,
+                Map.of(),
                 Map.of(),
                 Map.of()
         );
@@ -53,6 +63,7 @@ class WorldStateCodecTest {
                 1_783_620_000_000L,
                 350,
                 Map.of(id, VillagePersistentRecord.fromNewAggregate(village)),
+                Map.of(),
                 Map.of()
         );
 
@@ -89,7 +100,8 @@ class WorldStateCodecTest {
                 Map.of(
                         boundId, CitizenPersistentRecord.fromAggregate(bound),
                         unboundId, CitizenPersistentRecord.fromAggregate(unbound)
-                )
+                ),
+                Map.of()
         );
 
         WorldState decoded = WorldStateCodec.decode(WorldStateCodec.encode(state));
@@ -113,6 +125,7 @@ class WorldStateCodecTest {
                 10,
                 0,
                 Map.of(id, VillagePersistentRecord.fromNewAggregate(village)),
+                Map.of(),
                 Map.of()
         );
         CompoundTag tag = WorldStateCodec.encode(state);
@@ -161,6 +174,40 @@ class WorldStateCodecTest {
         assertEquals(before, source);
     }
 
+    @Test
+    void buildProjectRoundTripsThroughPause() {
+        VillageId villageId = new VillageId(UUID.fromString("af23cb27-b660-4d5d-a677-e8f6d74eafbb"));
+        VillageAggregate village = VillageAggregate.create(
+                villageId, "Village", new CoreLocation("minecraft:overworld", 1L), 0);
+        BuildingTemplateId templateId = new BuildingTemplateId("syntvalley:small_storehouse");
+        SitePlacement placement =
+                SitePlacement.of("minecraft:overworld", 10, 64, -20, Rotation.CLOCKWISE_90, templateId, 1);
+
+        ProjectId projectId = new ProjectId(UUID.fromString("33333333-3333-3333-3333-333333333333"));
+        BuildProject project = BuildProject.create(projectId, villageId, templateId, 1, placement, 26);
+        project = ((ProjectTransitionResult.Changed) project.beginBuilding()).project();
+        project = ((ProjectTransitionResult.Changed) project.recordBlockPlaced()).project();
+        project = ((ProjectTransitionResult.Changed) project.pause(ProjectPauseReason.SITE_OBSTRUCTED)).project();
+
+        WorldState state = new WorldState(
+                UUID.fromString("97de21a2-19bf-4e0c-b850-126ca8e5d35e"),
+                5,
+                1_783_620_000_000L,
+                350,
+                Map.of(villageId, VillagePersistentRecord.fromNewAggregate(village)),
+                Map.of(),
+                Map.of(projectId, ProjectPersistentRecord.fromAggregate(project))
+        );
+
+        WorldState decoded = WorldStateCodec.decode(WorldStateCodec.encode(state));
+        assertEquals(state, decoded);
+        BuildProject restored = decoded.projects().get(projectId).toAggregate();
+        assertEquals(ProjectState.PAUSED, restored.state());
+        assertEquals(ProjectPauseReason.SITE_OBSTRUCTED, restored.pauseReason().orElseThrow());
+        assertEquals(1, restored.placedBlocks());
+        assertEquals(Rotation.CLOCKWISE_90, restored.placement().rotation());
+    }
+
     private static WorldState singleCitizenState() {
         VillageId villageId = new VillageId(UUID.fromString("af23cb27-b660-4d5d-a677-e8f6d74eafbb"));
         VillageAggregate village = VillageAggregate.create(
@@ -177,7 +224,8 @@ class WorldStateCodecTest {
                 10,
                 0,
                 Map.of(villageId, VillagePersistentRecord.fromNewAggregate(village)),
-                Map.of(citizenId, CitizenPersistentRecord.fromAggregate(citizen))
+                Map.of(citizenId, CitizenPersistentRecord.fromAggregate(citizen)),
+                Map.of()
         );
     }
 }
