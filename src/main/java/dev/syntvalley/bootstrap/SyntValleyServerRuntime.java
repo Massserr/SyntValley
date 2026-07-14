@@ -2,14 +2,18 @@ package dev.syntvalley.bootstrap;
 
 import dev.syntvalley.application.port.CitizenStateRepository;
 import dev.syntvalley.application.port.ResourceSource;
+import dev.syntvalley.application.port.ResourceWithdrawal;
 import dev.syntvalley.application.port.VillageStateRepository;
 import dev.syntvalley.application.profession.ProfessionCatalog;
 import dev.syntvalley.application.query.VillageOverviewDto;
 import dev.syntvalley.application.query.VillageOverviewQuery;
+import dev.syntvalley.application.resource.NutritionCatalog;
 import dev.syntvalley.application.service.CitizenApplicationService;
 import dev.syntvalley.application.service.CitizenBindingService;
 import dev.syntvalley.application.service.CoreBindingService;
+import dev.syntvalley.application.service.MealOutcome;
 import dev.syntvalley.application.service.PendingConsoleLinks;
+import dev.syntvalley.application.service.ResourceApplicationService;
 import dev.syntvalley.application.service.ScreenSessionRegistry;
 import dev.syntvalley.application.service.VillageApplicationService;
 import dev.syntvalley.application.simulation.CitizenSimulationStep;
@@ -26,8 +30,16 @@ import dev.syntvalley.domain.need.Needs;
 import dev.syntvalley.domain.profession.CitizenProfession;
 import dev.syntvalley.domain.profession.ProfessionDefinition;
 import dev.syntvalley.domain.profession.ProfessionId;
+import dev.syntvalley.domain.resource.MealPlanner;
 import dev.syntvalley.domain.resource.ResourceKey;
 import dev.syntvalley.domain.resource.ResourceLedger;
+import dev.syntvalley.domain.resource.ResourceReservations;
+import dev.syntvalley.domain.task.Task;
+import dev.syntvalley.domain.task.TaskFailureReason;
+import dev.syntvalley.domain.task.TaskKind;
+import dev.syntvalley.domain.task.TaskRetryPolicy;
+import dev.syntvalley.domain.task.TaskState;
+import dev.syntvalley.domain.task.TaskTransitionResult;
 import dev.syntvalley.domain.village.CoreBinding;
 import dev.syntvalley.domain.village.CoreLocation;
 import dev.syntvalley.domain.village.VillageAggregate;
@@ -54,6 +66,15 @@ public final class SyntValleyServerRuntime {
     /** Rest points recovered per serviced simulation step while a citizen rests in place. */
     private static final int REST_RECOVERY_PER_STEP = 60;
 
+    /** Hunger at or below which a citizen will eat a meal drawn from village storage. */
+    private static final int FOOD_EAT_THRESHOLD = 600;
+
+    /** How long a RUNNING food-delivery task holds its lease, in game ticks. */
+    private static final long FOOD_TASK_LEASE_TICKS = 100L;
+
+    /** Retry/backoff for a food task that hit a stale ledger view before it is terminally failed. */
+    private static final TaskRetryPolicy FOOD_RETRY_POLICY = TaskRetryPolicy.defaults();
+
     private final MinecraftServer server;
     private final SyntValleySavedData savedData;
     private final VillageStateRepository villageRepository;
@@ -69,6 +90,9 @@ public final class SyntValleyServerRuntime {
             new CitizenSimulationStep(needDecayRates, REST_RECOVERY_PER_STEP);
     private final ProfessionCatalog professions = ProfessionCatalog.builtin();
     private final Map<VillageId, Set<ResourceSource>> storagesByVillage = new LinkedHashMap<>();
+    private final Map<VillageId, ResourceReservations> reservationsByVillage = new LinkedHashMap<>();
+    private final ResourceApplicationService resourceService =
+            new ResourceApplicationService(NutritionCatalog.builtin(), new MealPlanner(FOOD_EAT_THRESHOLD));
     private final PersistenceCoordinator persistenceCoordinator;
     private boolean acceptingCommands = true;
 
@@ -203,9 +227,86 @@ public final class SyntValleyServerRuntime {
         Optional<ProfessionDefinition> definition =
                 citizen.profession().flatMap(active -> professions.get(active.professionId()));
         CitizenAggregate advanced = simulationStep.advance(citizen, gameTime, TaskId::random, definition);
-        if (advanced != citizen) {
-            citizenRepository.update(advanced, citizen.revision());
+        CitizenAggregate result = feedFromStorageIfRequested(citizen, advanced, gameTime);
+        if (result != citizen) {
+            citizenRepository.update(result, citizen.revision());
         }
+    }
+
+    /**
+     * When the just-advanced citizen's active task is to get food, draws one meal from the village's
+     * linked storage and folds it into a SINGLE simulation step: the returned aggregate is exactly one
+     * revision beyond the stored {@code original}, never two, so the optimistic update is accepted (a
+     * second {@code withSimulation} would bump the revision twice and the repository would reject it). On
+     * success it restores hunger and completes the task; a stale ledger view fails the task with
+     * {@link TaskFailureReason#STALE_RESOURCE_VIEW} and retries with backoff; with no food available the
+     * task simply waits. All physical removal goes through {@link ResourceSource#withdraw}, so nothing is
+     * ever created or duplicated.
+     */
+    private CitizenAggregate feedFromStorageIfRequested(
+            CitizenAggregate original, CitizenAggregate advanced, long gameTime) {
+        Optional<Task> active = advanced.activeTask().filter(task -> !task.state().isTerminal());
+        if (active.isEmpty() || active.orElseThrow().kind() != TaskKind.REQUEST_FOOD) {
+            return advanced;
+        }
+        Task task = active.orElseThrow();
+
+        Task running;
+        if (task.state() == TaskState.RUNNING) {
+            running = task;
+        } else if (task.start(gameTime + FOOD_TASK_LEASE_TICKS, gameTime)
+                instanceof TaskTransitionResult.Changed started) {
+            running = started.task();
+        } else {
+            return advanced; // still in retry backoff after a stale view; keep the advanced baseline
+        }
+
+        VillageId villageId = advanced.villageId();
+        ResourceReservations reservations =
+                reservationsByVillage.computeIfAbsent(villageId, key -> new ResourceReservations());
+        ResourceLedger ledger = buildLedger(villageId, gameTime);
+        ResourceWithdrawal withdrawal = (key, amount) -> withdrawFromVillage(villageId, key, amount);
+
+        MealOutcome outcome = resourceService.feed(
+                running.id(), advanced.needs().hunger(), ledger, reservations, withdrawal, gameTime);
+        // Re-derive from the stored citizen so decay + feeding together advance the revision exactly once.
+        return switch (outcome.result()) {
+            case FED -> original.withSimulation(
+                    advanced.needs().replenish(NeedKind.HUNGER, outcome.hungerRestored()),
+                    Optional.of(requireChanged(running.succeed())),
+                    advanced.profession());
+            case STALE -> original.withSimulation(
+                    advanced.needs(),
+                    Optional.of(requireChanged(
+                            running.fail(TaskFailureReason.STALE_RESOURCE_VIEW, gameTime, FOOD_RETRY_POLICY))),
+                    advanced.profession());
+            case NO_FOOD, RESERVED -> running == task
+                    ? advanced
+                    : original.withSimulation(advanced.needs(), Optional.of(running), advanced.profession());
+        };
+    }
+
+    /** Fans a withdrawal request across the village's linked storages, returning the total removed. */
+    private int withdrawFromVillage(VillageId villageId, ResourceKey key, int amount) {
+        Set<ResourceSource> sources = storagesByVillage.get(villageId);
+        if (sources == null || amount <= 0) {
+            return 0;
+        }
+        int remaining = amount;
+        for (ResourceSource source : sources) {
+            if (remaining <= 0) {
+                break;
+            }
+            remaining -= source.withdraw(key, remaining);
+        }
+        return amount - remaining;
+    }
+
+    private static Task requireChanged(TaskTransitionResult result) {
+        if (result instanceof TaskTransitionResult.Changed changed) {
+            return changed.task();
+        }
+        throw new IllegalStateException("expected task transition to apply, got " + result);
     }
 
     /** Feeds a citizen: brings needs up to now, then replenishes hunger. Returns whether it applied. */

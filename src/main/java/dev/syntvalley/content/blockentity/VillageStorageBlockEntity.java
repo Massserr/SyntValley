@@ -8,6 +8,7 @@ import dev.syntvalley.domain.resource.ResourceKey;
 import dev.syntvalley.registry.ModBlockEntities;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
@@ -71,10 +72,20 @@ public final class VillageStorageBlockEntity extends BlockEntity implements Reso
         if (bound.isEmpty()) {
             return false;
         }
-        villageId = bound.orElseThrow();
+        bindToVillage(level, bound.orElseThrow());
+        return true;
+    }
+
+    /** Server-side link of this storage to a village, shared by the pending-selection flow. */
+    public void bindToVillage(ServerLevel level, VillageId villageId) {
+        this.villageId = Objects.requireNonNull(villageId, "villageId");
         setChanged();
         ensureRegistered(level);
-        return true;
+    }
+
+    /** Adds items to the store programmatically (stocking / staging); returns whatever did not fit. */
+    public ItemStack deposit(ItemStack stack) {
+        return container.addItem(stack);
     }
 
     public void openStorage(ServerPlayer player) {
@@ -99,6 +110,26 @@ public final class VillageStorageBlockEntity extends BlockEntity implements Reso
             counts.merge(new ResourceKey(id.toString()), stack.getCount(), Integer::sum);
         }
         return counts;
+    }
+
+    @Override
+    public int withdraw(ResourceKey key, int amount) {
+        if (amount <= 0) {
+            return 0;
+        }
+        int removed = 0;
+        for (int slot = 0; slot < container.getContainerSize() && removed < amount; slot++) {
+            ItemStack stack = container.getItem(slot);
+            if (stack.isEmpty()) {
+                continue;
+            }
+            ResourceLocation id = BuiltInRegistries.ITEM.getKey(stack.getItem());
+            if (!new ResourceKey(id.toString()).equals(key)) {
+                continue;
+            }
+            removed += container.removeItem(slot, amount - removed).getCount();
+        }
+        return removed;
     }
 
     private void ensureRegistered(ServerLevel level) {

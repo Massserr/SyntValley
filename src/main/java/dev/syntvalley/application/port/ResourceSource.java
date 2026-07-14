@@ -9,4 +9,11 @@ import java.util.Map;
  */
 public interface ResourceSource {
     Map<ResourceKey, Integer> snapshotCounts();
+
+    /**
+     * Physically removes up to {@code amount} units of {@code key} from this store, returning how many
+     * were actually removed. The store is the source of truth, so the caller trusts this count — never
+     * the ledger cache — and a smaller return means a player emptied the stack after the plan was made.
+     */
+    int withdraw(ResourceKey key, int amount);
 }

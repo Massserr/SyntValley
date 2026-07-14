@@ -41,7 +41,9 @@ public final class SyntCitizenSimulationGameTests {
             // Fast-forward the simulation by passing a far-future tick: hunger decays to critical.
             runtime.simulateCitizen(citizenId, now + 16_000);
             CitizenAggregate hungry = runtime.inspectCitizen(citizenId).orElseThrow();
-            helper.assertTrue(hungry.needs().hunger() <= 200, "hunger should be critical after decay");
+            helper.assertTrue(hungry.needs().hunger() <= 200, "hunger should be critical after decay but was "
+                    + hungry.needs().hunger() + " (lifecycle=" + hungry.lifecycle() + ", task="
+                    + hungry.activeTask().map(t -> t.kind() + "/" + t.state()).orElse("none") + ")");
             helper.assertValueEqual(hungry.activeTask().orElseThrow().kind(), TaskKind.REQUEST_FOOD, "activity");
 
             helper.assertTrue(runtime.feedCitizen(citizenId, 300, now + 16_000), "feeding should apply");
