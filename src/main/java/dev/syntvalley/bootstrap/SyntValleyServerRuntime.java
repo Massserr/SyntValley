@@ -1,5 +1,6 @@
 package dev.syntvalley.bootstrap;
 
+import dev.syntvalley.application.building.PlacementPlanner;
 import dev.syntvalley.application.port.CitizenStateRepository;
 import dev.syntvalley.application.port.ResourceSource;
 import dev.syntvalley.application.port.ResourceWithdrawal;
@@ -13,10 +14,15 @@ import dev.syntvalley.application.service.CitizenBindingService;
 import dev.syntvalley.application.service.CoreBindingService;
 import dev.syntvalley.application.service.MealOutcome;
 import dev.syntvalley.application.service.PendingConsoleLinks;
+import dev.syntvalley.application.service.ProjectApplicationService;
+import dev.syntvalley.application.service.ProposalRejection;
+import dev.syntvalley.application.service.ProposeResult;
 import dev.syntvalley.application.service.ResourceApplicationService;
 import dev.syntvalley.application.service.ScreenSessionRegistry;
 import dev.syntvalley.application.service.VillageApplicationService;
 import dev.syntvalley.application.simulation.CitizenSimulationStep;
+import dev.syntvalley.content.building.WorldPlacementAdapter;
+import dev.syntvalley.domain.building.BuildingTemplateId;
 import dev.syntvalley.domain.citizen.CitizenAggregate;
 import dev.syntvalley.domain.citizen.CitizenEntityBinding;
 import dev.syntvalley.domain.citizen.CitizenLifecycle;
@@ -30,6 +36,8 @@ import dev.syntvalley.domain.need.Needs;
 import dev.syntvalley.domain.profession.CitizenProfession;
 import dev.syntvalley.domain.profession.ProfessionDefinition;
 import dev.syntvalley.domain.profession.ProfessionId;
+import dev.syntvalley.domain.project.BuildProject;
+import dev.syntvalley.domain.project.ProjectId;
 import dev.syntvalley.domain.resource.MealPlanner;
 import dev.syntvalley.domain.resource.ResourceKey;
 import dev.syntvalley.domain.resource.ResourceLedger;
@@ -51,12 +59,17 @@ import dev.syntvalley.persistence.saveddata.SavedDataVillageRepository;
 import dev.syntvalley.persistence.saveddata.SyntValleySavedData;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 
 /** Per-MinecraftServer composition root. Canonical gameplay state remains in SavedData. */
 public final class SyntValleyServerRuntime {
@@ -74,6 +87,9 @@ public final class SyntValleyServerRuntime {
 
     /** Retry/backoff for a food task that hit a stale ledger view before it is terminally failed. */
     private static final TaskRetryPolicy FOOD_RETRY_POLICY = TaskRetryPolicy.defaults();
+
+    /** How often active build projects advance one block, in game ticks (a steady, visible pace). */
+    private static final long PROJECT_TICK_INTERVAL = 10L;
 
     private final MinecraftServer server;
     private final SyntValleySavedData savedData;
@@ -93,6 +109,9 @@ public final class SyntValleyServerRuntime {
     private final Map<VillageId, ResourceReservations> reservationsByVillage = new LinkedHashMap<>();
     private final ResourceApplicationService resourceService =
             new ResourceApplicationService(NutritionCatalog.builtin(), new MealPlanner(FOOD_EAT_THRESHOLD));
+    private final ProjectApplicationService projectService =
+            new ProjectApplicationService(PlacementPlanner.defaults(), ProjectId::random);
+    private final Map<ProjectId, BuildProject> projects = new LinkedHashMap<>();
     private final PersistenceCoordinator persistenceCoordinator;
     private boolean acceptingCommands = true;
 
@@ -402,10 +421,70 @@ public final class SyntValleyServerRuntime {
         return new ResourceLedger(totals, gameTime);
     }
 
+    /** Proposes a build project: Java validates a site near the core and admits it, or rejects with a reason. */
+    public ProposeResult proposeProject(
+            ServerLevel level, VillageId villageId, BlockPos corePos, BuildingTemplateId templateId) {
+        assertServerThread();
+        if (!acceptingCommands) {
+            return new ProposeResult.Rejected(ProposalRejection.NO_SITE);
+        }
+        WorldPlacementAdapter world = new WorldPlacementAdapter(level);
+        ProposeResult result = projectService.propose(
+                villageId, level.dimension().location().toString(),
+                corePos.getX(), corePos.getY(), corePos.getZ(), templateId, world);
+        if (result instanceof ProposeResult.Proposed proposed) {
+            projects.put(proposed.project().id(), proposed.project());
+        }
+        return result;
+    }
+
+    /** Advances one project by a single bounded step (stage materials, then place one block). */
+    public void advanceProject(ProjectId projectId, long gameTime) {
+        assertServerThread();
+        if (!acceptingCommands) {
+            return;
+        }
+        BuildProject project = projects.get(Objects.requireNonNull(projectId, "projectId"));
+        if (project == null || project.state().isTerminal()) {
+            return;
+        }
+        ServerLevel level = resolveLevel(project.placement().dimensionId());
+        if (level == null) {
+            return; // the project's dimension is not loaded; try again later
+        }
+        WorldPlacementAdapter world = new WorldPlacementAdapter(level);
+        VillageId villageId = project.villageId();
+        ResourceLedger ledger = buildLedger(villageId, gameTime);
+        ResourceWithdrawal withdrawal = (key, amount) -> withdrawFromVillage(villageId, key, amount);
+        projects.put(projectId, projectService.advance(project, ledger, withdrawal, world));
+    }
+
+    public Optional<BuildProject> inspectProject(ProjectId projectId) {
+        assertServerThread();
+        return Optional.ofNullable(projects.get(Objects.requireNonNull(projectId, "projectId")));
+    }
+
+    private void advanceActiveProjects(long gameTime) {
+        for (ProjectId projectId : List.copyOf(projects.keySet())) {
+            advanceProject(projectId, gameTime);
+        }
+    }
+
+    private ServerLevel resolveLevel(String dimensionId) {
+        ResourceLocation id = ResourceLocation.tryParse(dimensionId);
+        if (id == null) {
+            return null;
+        }
+        return server.getLevel(net.minecraft.resources.ResourceKey.create(Registries.DIMENSION, id));
+    }
+
     public void onServerTick(long gameTime) {
         assertServerThread();
         if (acceptingCommands && savedData.isAvailable()) {
             persistenceCoordinator.onServerTick(gameTime);
+            if (gameTime % PROJECT_TICK_INTERVAL == 0) {
+                advanceActiveProjects(gameTime);
+            }
         }
     }
 
