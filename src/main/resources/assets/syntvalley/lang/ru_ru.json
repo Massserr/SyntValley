@@ -22,5 +22,8 @@
   "screen.syntvalley.village_overview.storage": "Склад",
   "screen.syntvalley.village_overview.storage.empty": "Пусто",
   "screen.syntvalley.village_overview.storage.more": "…и ещё %s предметов",
+  "screen.syntvalley.village_overview.build": "Заказать навес",
+  "screen.syntvalley.village_overview.no_project": "Проект: нет",
+  "screen.syntvalley.village_overview.project": "Проект: %s",
   "syntvalley.configuration.startup_diagnostics": "Диагностика при запуске"
 }

@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 
 class VillageOverviewCacheTest {
     private static VillageOverviewDto snapshot(long revision) {
-        return new VillageOverviewDto("v", "Village", "ACTIVE", revision, true, 0, false, List.of(), List.of());
+        return new VillageOverviewDto("v", "Village", "ACTIVE", revision, true, 0, false, List.of(), List.of(), "");
     }
 
     @Test

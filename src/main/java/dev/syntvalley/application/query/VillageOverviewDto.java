@@ -16,12 +16,14 @@ public record VillageOverviewDto(
         int residentCount,
         boolean residentsTruncated,
         List<CitizenOverviewEntry> residents,
-        List<ResourceSummaryEntry> resources
+        List<ResourceSummaryEntry> resources,
+        String projectStatus
 ) {
     public VillageOverviewDto {
         Objects.requireNonNull(villageId, "villageId");
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(lifecycle, "lifecycle");
+        Objects.requireNonNull(projectStatus, "projectStatus");
         residents = List.copyOf(Objects.requireNonNull(residents, "residents"));
         resources = List.copyOf(Objects.requireNonNull(resources, "resources"));
         if (revision < 1) {

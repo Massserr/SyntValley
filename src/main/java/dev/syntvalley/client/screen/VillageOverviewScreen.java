@@ -3,7 +3,9 @@ package dev.syntvalley.client.screen;
 import dev.syntvalley.application.query.VillageOverviewDto;
 import dev.syntvalley.client.cache.VillageOverviewCache;
 import dev.syntvalley.network.CloseVillageOverviewPayload;
+import dev.syntvalley.network.ProposeBuildPayload;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -23,6 +25,17 @@ public final class VillageOverviewScreen extends Screen {
 
     public void applySnapshot(VillageOverviewDto overview) {
         cache.accept(overview);
+    }
+
+    @Override
+    protected void init() {
+        super.init();
+        int left = this.width / 2 - 150;
+        this.addRenderableWidget(Button.builder(
+                        Component.translatable("screen.syntvalley.village_overview.build"),
+                        button -> PacketDistributor.sendToServer(ProposeBuildPayload.INSTANCE))
+                .bounds(left, this.height - 32, 150, 20)
+                .build());
     }
 
     @Override
@@ -88,6 +101,14 @@ public final class VillageOverviewScreen extends Screen {
                         left, y, 0xAAAAAA);
             }
         }
+
+        y += 8;
+        String projectStatus = overview.projectStatus();
+        graphics.drawString(this.font,
+                projectStatus.isEmpty()
+                        ? Component.translatable("screen.syntvalley.village_overview.no_project")
+                        : Component.translatable("screen.syntvalley.village_overview.project", projectStatus),
+                left, y, 0xFFFFFF);
     }
 
     @Override

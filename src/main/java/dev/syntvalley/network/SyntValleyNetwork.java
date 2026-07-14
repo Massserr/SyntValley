@@ -2,6 +2,7 @@ package dev.syntvalley.network;
 
 import dev.syntvalley.bootstrap.ServerRuntimeManager;
 import net.minecraft.server.level.ServerPlayer;
+import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
@@ -23,6 +24,21 @@ public final class SyntValleyNetwork {
                 CloseVillageOverviewPayload.TYPE,
                 CloseVillageOverviewPayload.STREAM_CODEC,
                 SyntValleyNetwork::handleClose);
+        registrar.playToServer(
+                ProposeBuildPayload.TYPE,
+                ProposeBuildPayload.STREAM_CODEC,
+                SyntValleyNetwork::handleProposeBuild);
+    }
+
+    private static void handleProposeBuild(ProposeBuildPayload payload, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            if (context.player() instanceof ServerPlayer player) {
+                ServerRuntimeManager.find(player.getServer()).ifPresent(runtime ->
+                        runtime.proposeBuildForViewer(player.getUUID(), player.serverLevel().getGameTime())
+                                .ifPresent(overview -> PacketDistributor.sendToPlayer(
+                                        player, new VillageOverviewSnapshotPayload(overview))));
+            }
+        });
     }
 
     private static void handleSnapshot(VillageOverviewSnapshotPayload payload, IPayloadContext context) {

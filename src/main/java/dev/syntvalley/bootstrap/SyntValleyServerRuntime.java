@@ -1,5 +1,6 @@
 package dev.syntvalley.bootstrap;
 
+import dev.syntvalley.application.building.BuildingCatalog;
 import dev.syntvalley.application.building.PlacementPlanner;
 import dev.syntvalley.application.port.CitizenStateRepository;
 import dev.syntvalley.application.port.ResourceSource;
@@ -112,6 +113,7 @@ public final class SyntValleyServerRuntime {
     private final ProjectApplicationService projectService =
             new ProjectApplicationService(PlacementPlanner.defaults(), ProjectId::random);
     private final Map<ProjectId, BuildProject> projects = new LinkedHashMap<>();
+    private long overviewSnapshotSeq;
     private final PersistenceCoordinator persistenceCoordinator;
     private boolean acceptingCommands = true;
 
@@ -374,8 +376,9 @@ public final class SyntValleyServerRuntime {
         if (!acceptingCommands) {
             return Optional.empty();
         }
-        Optional<VillageOverviewDto> overview =
-                overviewQuery.overview(villageId, buildLedger(villageId, gameTime).counts());
+        Optional<VillageOverviewDto> overview = overviewQuery.overview(
+                villageId, buildLedger(villageId, gameTime).counts(),
+                activeProjectStatus(villageId), nextSnapshotRevision());
         if (overview.isEmpty()) {
             return Optional.empty();
         }
@@ -391,6 +394,55 @@ public final class SyntValleyServerRuntime {
     public void closeOverview(UUID viewer) {
         assertServerThread();
         screenSessions.close(viewer);
+    }
+
+    /**
+     * Proposes a build for the village the viewer currently has open (one project at a time) and returns a
+     * fresh overview snapshot so the panel updates immediately. The village comes from the viewer's server
+     * session, never from the client, and Java picks the site from the village's own core location.
+     */
+    public Optional<VillageOverviewDto> proposeBuildForViewer(UUID viewer, long gameTime) {
+        assertServerThread();
+        if (!acceptingCommands) {
+            return Optional.empty();
+        }
+        Optional<VillageId> village = screenSessions.find(Objects.requireNonNull(viewer, "viewer"))
+                .map(ScreenSessionRegistry.OverviewSession::villageId);
+        if (village.isEmpty()) {
+            return Optional.empty();
+        }
+        VillageId villageId = village.orElseThrow();
+        Optional<VillageAggregate> found = villageRepository.find(villageId);
+        if (found.isEmpty() || found.orElseThrow().coreLocation().isEmpty()) {
+            return Optional.empty();
+        }
+        CoreLocation core = found.orElseThrow().coreLocation().orElseThrow();
+        ServerLevel level = resolveLevel(core.dimensionId());
+        if (level != null && activeProjectStatus(villageId).isEmpty()) {
+            proposeProject(level, villageId, BlockPos.of(core.packedPos()), BuildingCatalog.SMALL_STOREHOUSE);
+        }
+        return overviewQuery.overview(
+                villageId, buildLedger(villageId, gameTime).counts(),
+                activeProjectStatus(villageId), nextSnapshotRevision());
+    }
+
+    /** A short human-readable status of the village's one active project, or empty when there is none. */
+    private String activeProjectStatus(VillageId villageId) {
+        for (BuildProject project : projects.values()) {
+            if (project.villageId().equals(villageId) && !project.state().isTerminal()) {
+                String base = project.state().name() + " " + project.placedBlocks() + "/" + project.totalBlocks();
+                return project.pauseReason().map(reason -> base + " (" + reason.name() + ")").orElse(base);
+            }
+        }
+        return "";
+    }
+
+    /** Monotonic snapshot revision so a pushed overview is never dropped by the client's dedup-by-revision. */
+    private long nextSnapshotRevision() {
+        if (overviewSnapshotSeq == Long.MAX_VALUE) {
+            overviewSnapshotSeq = 0;
+        }
+        return ++overviewSnapshotSeq;
     }
 
     public void registerStorage(VillageId villageId, ResourceSource source) {

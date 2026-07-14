@@ -44,6 +44,7 @@ public final class VillageOverviewStreamCodecs {
             buf.writeUtf(entry.resource());
             buf.writeInt(entry.count());
         }
+        buf.writeUtf(dto.projectStatus());
     }
 
     private static VillageOverviewDto decode(RegistryFriendlyByteBuf buf) {
@@ -72,7 +73,8 @@ public final class VillageOverviewStreamCodecs {
         for (int index = 0; index < resourceSize; index++) {
             resources.add(new VillageOverviewDto.ResourceSummaryEntry(buf.readUtf(), buf.readInt()));
         }
-        return new VillageOverviewDto(
-                villageId, name, lifecycle, revision, coreBound, residentCount, residentsTruncated, residents, resources);
+        String projectStatus = buf.readUtf();
+        return new VillageOverviewDto(villageId, name, lifecycle, revision, coreBound,
+                residentCount, residentsTruncated, residents, resources, projectStatus);
     }
 }

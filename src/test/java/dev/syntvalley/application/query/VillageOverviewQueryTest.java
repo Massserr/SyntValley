@@ -41,7 +41,7 @@ class VillageOverviewQueryTest {
 
         VillageOverviewQuery query = new VillageOverviewQuery(
                 new StubVillages(VillageAggregate.create(VILLAGE, "Village", LOCATION, 0)), citizens);
-        VillageOverviewDto dto = query.overview(VILLAGE, Map.of()).orElseThrow();
+        VillageOverviewDto dto = query.overview(VILLAGE, Map.of(), "", 1L).orElseThrow();
 
         assertEquals(VILLAGE.toString(), dto.villageId());
         assertEquals("ACTIVE", dto.lifecycle());
@@ -62,7 +62,7 @@ class VillageOverviewQueryTest {
 
         VillageOverviewQuery query = new VillageOverviewQuery(
                 new StubVillages(VillageAggregate.create(VILLAGE, "Village", LOCATION, 0)), citizens);
-        VillageOverviewDto dto = query.overview(VILLAGE, Map.of()).orElseThrow();
+        VillageOverviewDto dto = query.overview(VILLAGE, Map.of(), "", 1L).orElseThrow();
 
         assertEquals(VillageOverviewQuery.MAX_OVERVIEW_RESIDENTS + 5, dto.residentCount());
         assertEquals(VillageOverviewQuery.MAX_OVERVIEW_RESIDENTS, dto.residents().size());
@@ -72,7 +72,7 @@ class VillageOverviewQueryTest {
     @Test
     void overviewMissingVillageIsEmpty() {
         VillageOverviewQuery query = new VillageOverviewQuery(new StubVillages(null), new InMemoryCitizenRepository());
-        assertTrue(query.overview(VILLAGE, Map.of()).isEmpty());
+        assertTrue(query.overview(VILLAGE, Map.of(), "", 1L).isEmpty());
     }
 
     @Test
@@ -86,8 +86,10 @@ class VillageOverviewQueryTest {
         counts.put(new ResourceKey("minecraft:bread"), 4);
         counts.put(new ResourceKey("minecraft:apple"), 0);
 
-        VillageOverviewDto dto = query.overview(VILLAGE, counts).orElseThrow();
+        VillageOverviewDto dto = query.overview(VILLAGE, counts, "BUILDING 5/26", 3L).orElseThrow();
 
+        assertEquals("BUILDING 5/26", dto.projectStatus());
+        assertEquals(3L, dto.revision());
         assertEquals(2, dto.resources().size());
         assertEquals("minecraft:bread", dto.resources().get(0).resource());
         assertEquals(4, dto.resources().get(0).count());

@@ -26,9 +26,14 @@ public final class VillageOverviewQuery {
         this.citizens = Objects.requireNonNull(citizens, "citizens");
     }
 
-    public Optional<VillageOverviewDto> overview(VillageId villageId, Map<ResourceKey, Integer> resourceCounts) {
+    public Optional<VillageOverviewDto> overview(
+            VillageId villageId, Map<ResourceKey, Integer> resourceCounts, String projectStatus, long snapshotRevision) {
         Objects.requireNonNull(villageId, "villageId");
         Objects.requireNonNull(resourceCounts, "resourceCounts");
+        Objects.requireNonNull(projectStatus, "projectStatus");
+        if (snapshotRevision < 1) {
+            throw new IllegalArgumentException("snapshotRevision must be positive");
+        }
         if (!villages.isAvailable() || !citizens.isAvailable()) {
             return Optional.empty();
         }
@@ -62,12 +67,13 @@ public final class VillageOverviewQuery {
                 village.id().toString(),
                 village.name(),
                 village.lifecycle().name(),
-                village.revision(),
+                snapshotRevision,
                 village.coreLocation().isPresent(),
                 residentCount,
                 residentCount > residents.size(),
                 residents,
-                resources
+                resources,
+                projectStatus
         ));
     }
 

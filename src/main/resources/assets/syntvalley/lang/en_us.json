@@ -22,5 +22,8 @@
   "screen.syntvalley.village_overview.storage": "Storage",
   "screen.syntvalley.village_overview.storage.empty": "Empty",
   "screen.syntvalley.village_overview.storage.more": "…and %s more items",
+  "screen.syntvalley.village_overview.build": "Order shelter",
+  "screen.syntvalley.village_overview.no_project": "Project: none",
+  "screen.syntvalley.village_overview.project": "Project: %s",
   "syntvalley.configuration.startup_diagnostics": "Startup diagnostics"
 }
