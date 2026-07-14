@@ -3,6 +3,7 @@ package dev.syntvalley.domain.building;
 import dev.syntvalley.domain.resource.ResourceKey;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -40,6 +41,13 @@ public record BuildingTemplate(BuildingTemplateId id, int version, List<Template
             max = Math.max(max, block.stage());
         }
         return max + 1;
+    }
+
+    /** All blocks in the order they are built: by stage ascending, stable within a stage. */
+    public List<TemplateBlock> placementOrder() {
+        List<TemplateBlock> ordered = new ArrayList<>(blocks);
+        ordered.sort(Comparator.comparingInt(TemplateBlock::stage));
+        return List.copyOf(ordered);
     }
 
     /** The blocks placed during one stage, in template order. */
