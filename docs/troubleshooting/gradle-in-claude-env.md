@@ -23,6 +23,17 @@
    .\gradlew.bat compileJava testClasses runGameTestServer --no-daemon --no-watch-fs --max-workers=1
    ```
 
+## Ограничение: loopback-тесты тоже не работают у ассистента
+
+Средой запрещены и локальные сокеты (`127.0.0.1`): юнит-тесты, поднимающие мок-HTTP-сервер
+(например, `OllamaLlmBackendTest`), в харнессе падают со стеком
+`sun.nio.ch.PipeImpl$Initializer$LoopbackConnector`. Это не ошибка кода. Такие тесты:
+
+1. компилируются харнессом (это проверка типов/API),
+2. исключаются из локального прогона ассистента (`SyntTestRunner` выбирает пакеты
+   `ai.backend`/`ai.orchestration`, но не `ai.ollama`),
+3. выполняются у пользователя: `.\gradlew.bat test` (или полный `build`).
+
 ## Как делить работу
 
 - Каждый срез режется на: **чистую часть** (проверяется харнессом → коммит сразу) и
