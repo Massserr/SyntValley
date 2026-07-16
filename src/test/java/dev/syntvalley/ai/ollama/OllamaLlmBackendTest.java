@@ -1,112 +1,87 @@
 package dev.syntvalley.ai.ollama;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.sun.net.httpserver.HttpServer;
 import dev.syntvalley.ai.backend.LlmErrorKind;
 import dev.syntvalley.ai.backend.LlmRequest;
 import dev.syntvalley.ai.backend.LlmResult;
-import java.io.IOException;
-import java.io.OutputStream;
-import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Classification tests against a fake transport — no socket, so they are deterministic and run anywhere.
+ * The real JDK transport is covered only by the optional live-Ollama check.
+ */
 class OllamaLlmBackendTest {
-    private HttpServer server;
+    private static final OllamaConfig CONFIG =
+            new OllamaConfig("http://127.0.0.1:11434", "qwen3:8b", 1_000, 500, 4_096);
 
-    @AfterEach
-    void stopServer() {
-        if (server != null) {
-            server.stop(0);
-            server = null;
-        }
+    private static OllamaHttp reply(int status, long declaredLength, String body) {
+        return (url, jsonBody) -> new OllamaHttp.Reply(status, declaredLength, body);
     }
 
-    private OllamaConfig startServer(String responseBody, int status, long delayMillis) throws IOException {
-        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/api/generate", exchange -> {
-            try {
-                if (delayMillis > 0) {
-                    Thread.sleep(delayMillis);
-                }
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-            }
-            byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
-            exchange.sendResponseHeaders(status, bytes.length);
-            try (OutputStream out = exchange.getResponseBody()) {
-                out.write(bytes);
-            }
-        });
-        server.start();
-        return new OllamaConfig(
-                "http://127.0.0.1:" + server.getAddress().getPort(), "qwen3:8b", 1_000, 500, 4_096);
+    private static OllamaHttp throwing(LlmErrorKind kind) {
+        return (url, jsonBody) -> {
+            throw new OllamaHttpException(kind, "boom");
+        };
     }
 
-    private static LlmResult.Failure expectFailure(OllamaConfig config, LlmErrorKind kind) {
-        LlmResult result = new OllamaLlmBackend(config).generate(LlmRequest.of("test", "hello"));
-        LlmResult.Failure failure = assertInstanceOf(LlmResult.Failure.class, result);
+    private static LlmResult generate(OllamaHttp http) {
+        return new OllamaLlmBackend(CONFIG, http).generate(LlmRequest.of("test", "hello"));
+    }
+
+    private static LlmResult.Failure expectFailure(OllamaHttp http, LlmErrorKind kind) {
+        LlmResult.Failure failure = assertInstanceOf(LlmResult.Failure.class, generate(http));
         assertEquals(kind, failure.kind());
         return failure;
     }
 
     @Test
-    void successfulGenerationReturnsContent() throws IOException {
-        OllamaConfig config = startServer("{\"response\":\"Привет из деревни\",\"done\":true}", 200, 0);
-        LlmResult result = new OllamaLlmBackend(config).generate(LlmRequest.of("diagnostic", "ping"));
+    void successReturnsUnicodeContent() {
+        LlmResult result = generate(reply(200, -1, "{\"model\":\"m\",\"response\":\"Привет из деревни\",\"done\":true}"));
         LlmResult.Success success = assertInstanceOf(LlmResult.Success.class, result);
         assertEquals("Привет из деревни", success.response().content());
-        assertTrue(success.response().durationMillis() >= 0);
     }
 
     @Test
-    void non200StatusIsHttpError() throws IOException {
-        expectFailure(startServer("busy", 503, 0), LlmErrorKind.HTTP_ERROR);
+    void non200IsHttpError() {
+        expectFailure(reply(503, -1, "busy"), LlmErrorKind.HTTP_ERROR);
     }
 
     @Test
-    void malformedJsonIsClassified() throws IOException {
-        expectFailure(startServer("{not json at all", 200, 0), LlmErrorKind.MALFORMED_RESPONSE);
+    void malformedJsonIsClassified() {
+        expectFailure(reply(200, -1, "{not json at all"), LlmErrorKind.MALFORMED_RESPONSE);
     }
 
     @Test
-    void notDoneEnvelopeIsMalformed() throws IOException {
-        expectFailure(startServer("{\"response\":\"partial\",\"done\":false}", 200, 0),
-                LlmErrorKind.MALFORMED_RESPONSE);
+    void notDoneEnvelopeIsMalformed() {
+        expectFailure(reply(200, -1, "{\"response\":\"partial\",\"done\":false}"), LlmErrorKind.MALFORMED_RESPONSE);
     }
 
     @Test
-    void oversizedEnvelopeIsRejected() throws IOException {
-        String huge = "{\"response\":\"" + "x".repeat(8_000) + "\",\"done\":true}";
-        expectFailure(startServer(huge, 200, 0), LlmErrorKind.RESPONSE_TOO_LARGE);
+    void declaredLengthOverCapIsRejectedBeforeReading() {
+        expectFailure(reply(200, 999_999, "ignored"), LlmErrorKind.RESPONSE_TOO_LARGE);
     }
 
     @Test
-    void slowBackendHitsTheDeadline() throws IOException {
-        expectFailure(startServer("{\"response\":\"late\",\"done\":true}", 200, 5_000), LlmErrorKind.TIMEOUT);
+    void oversizedBodyIsRejected() {
+        String huge = "{\"response\":\"" + "x".repeat(5_000) + "\",\"done\":true}";
+        expectFailure(reply(200, -1, huge), LlmErrorKind.RESPONSE_TOO_LARGE);
     }
 
     @Test
-    void closedPortIsConnectFailed() throws IOException {
-        HttpServer probe = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        int freePort = probe.getAddress().getPort();
-        probe.stop(0); // the port is now closed
-        OllamaConfig config = new OllamaConfig("http://127.0.0.1:" + freePort, "qwen3:8b", 500, 500, 4_096);
-        expectFailure(config, LlmErrorKind.CONNECT_FAILED);
+    void transportTimeoutAndConnectFailureAreTyped() {
+        expectFailure(throwing(LlmErrorKind.TIMEOUT), LlmErrorKind.TIMEOUT);
+        expectFailure(throwing(LlmErrorKind.CONNECT_FAILED), LlmErrorKind.CONNECT_FAILED);
     }
 
     @Test
-    void diagnosticsNeverContainThePrompt() throws IOException {
-        OllamaConfig config = startServer("nope", 500, 0);
-        LlmResult result = new OllamaLlmBackend(config)
+    void diagnosticsNeverContainThePrompt() {
+        OllamaHttp http = reply(500, -1, "nope");
+        LlmResult result = new OllamaLlmBackend(CONFIG, http)
                 .generate(LlmRequest.of("test", "SECRET-PROMPT-TEXT"));
         LlmResult.Failure failure = assertInstanceOf(LlmResult.Failure.class, result);
-        assertTrue(!failure.diagnostic().contains("SECRET-PROMPT-TEXT"),
-                "diagnostics must stay prompt-free");
+        assertFalse(failure.diagnostic().contains("SECRET-PROMPT-TEXT"), "diagnostics must stay prompt-free");
     }
 }

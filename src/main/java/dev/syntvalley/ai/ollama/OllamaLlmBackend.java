@@ -5,33 +5,27 @@ import dev.syntvalley.ai.backend.LlmErrorKind;
 import dev.syntvalley.ai.backend.LlmRequest;
 import dev.syntvalley.ai.backend.LlmResponse;
 import dev.syntvalley.ai.backend.LlmResult;
-import java.io.IOException;
-import java.net.ConnectException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.net.http.HttpTimeoutException;
-import java.time.Duration;
 import java.util.Objects;
-import java.util.OptionalLong;
 
 /**
- * The Ollama HTTP adapter over {@code POST /api/generate} with {@code stream=false}. Blocking, so it
- * runs only on the executor's worker threads. Every failure is classified into a typed result — the
- * adapter never throws — and diagnostics stay short and prompt-free so nothing sensitive reaches logs.
- * The response envelope is size-capped via Content-Length when present and re-checked after reading.
- * JSON is built and parsed by {@link OllamaEnvelope}, so the mod carries no JSON-library dependency.
+ * The Ollama backend over {@code POST /api/generate} with {@code stream=false}. Blocking, so it runs
+ * only on the executor's worker threads. The network itself lives behind {@link OllamaHttp}; this class
+ * owns the classification: it never throws, every failure becomes a typed {@link LlmResult.Failure}, and
+ * diagnostics stay short and prompt-free so nothing sensitive reaches logs. JSON is built and parsed by
+ * {@link OllamaEnvelope}, so the mod carries no JSON-library dependency. The response is size-capped via
+ * the declared Content-Length and re-checked after reading.
  */
 public final class OllamaLlmBackend implements LlmBackend {
     private final OllamaConfig config;
-    private final HttpClient client;
+    private final OllamaHttp http;
 
     public OllamaLlmBackend(OllamaConfig config) {
+        this(config, new JdkOllamaHttp(config));
+    }
+
+    public OllamaLlmBackend(OllamaConfig config, OllamaHttp http) {
         this.config = Objects.requireNonNull(config, "config");
-        this.client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofMillis(config.connectTimeoutMillis()))
-                .build();
+        this.http = Objects.requireNonNull(http, "http");
     }
 
     @Override
@@ -43,43 +37,26 @@ public final class OllamaLlmBackend implements LlmBackend {
                 + ",\"prompt\":" + OllamaEnvelope.quote(request.prompt())
                 + ",\"stream\":false}";
 
-        HttpRequest httpRequest = HttpRequest.newBuilder()
-                .uri(URI.create(config.baseUrl() + "/api/generate"))
-                .timeout(Duration.ofMillis(config.requestTimeoutMillis()))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build();
-
-        HttpResponse<String> response;
+        OllamaHttp.Reply reply;
         try {
-            response = client.send(httpRequest, HttpResponse.BodyHandlers.ofString());
-        } catch (HttpTimeoutException timeout) {
-            return failure(request, LlmErrorKind.TIMEOUT, "request deadline exceeded");
-        } catch (ConnectException refused) {
-            return failure(request, LlmErrorKind.CONNECT_FAILED, "connection refused");
-        } catch (IOException io) {
-            return failure(request, LlmErrorKind.CONNECT_FAILED, io.getClass().getSimpleName());
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            return failure(request, LlmErrorKind.CANCELLED, "interrupted");
+            reply = http.send(config.baseUrl() + "/api/generate", body);
+        } catch (OllamaHttpException failure) {
+            return failure(request, failure.kind(), failure.getMessage());
         }
 
-        OptionalLong contentLength = response.headers().firstValueAsLong("Content-Length");
-        if (contentLength.isPresent() && contentLength.getAsLong() > config.maxResponseChars()) {
-            return failure(request, LlmErrorKind.RESPONSE_TOO_LARGE,
-                    "content-length " + contentLength.getAsLong());
+        if (reply.declaredLength() > config.maxResponseChars()) {
+            return failure(request, LlmErrorKind.RESPONSE_TOO_LARGE, "content-length " + reply.declaredLength());
         }
-        if (response.statusCode() != 200) {
-            return failure(request, LlmErrorKind.HTTP_ERROR, "status " + response.statusCode());
+        if (reply.status() != 200) {
+            return failure(request, LlmErrorKind.HTTP_ERROR, "status " + reply.status());
         }
-        String payload = response.body();
-        if (payload.length() > config.maxResponseChars()) {
-            return failure(request, LlmErrorKind.RESPONSE_TOO_LARGE, "body chars " + payload.length());
+        if (reply.body().length() > config.maxResponseChars()) {
+            return failure(request, LlmErrorKind.RESPONSE_TOO_LARGE, "body chars " + reply.body().length());
         }
 
         OllamaEnvelope envelope;
         try {
-            envelope = OllamaEnvelope.parse(payload);
+            envelope = OllamaEnvelope.parse(reply.body());
         } catch (RuntimeException malformed) {
             return failure(request, LlmErrorKind.MALFORMED_RESPONSE, malformed.getClass().getSimpleName());
         }
@@ -99,6 +76,6 @@ public final class OllamaLlmBackend implements LlmBackend {
     }
 
     private static LlmResult failure(LlmRequest request, LlmErrorKind kind, String diagnostic) {
-        return new LlmResult.Failure(request.id(), kind, diagnostic);
+        return new LlmResult.Failure(request.id(), kind, diagnostic == null ? kind.name() : diagnostic);
     }
 }
