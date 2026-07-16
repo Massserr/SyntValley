@@ -28,6 +28,29 @@ public final class SyntValleyNetwork {
                 ProposeBuildPayload.TYPE,
                 ProposeBuildPayload.STREAM_CODEC,
                 SyntValleyNetwork::handleProposeBuild);
+        registrar.playToServer(
+                RequestVillageLogPayload.TYPE,
+                RequestVillageLogPayload.STREAM_CODEC,
+                SyntValleyNetwork::handleRequestVillageLog);
+        registrar.playToClient(
+                VillageLogPagePayload.TYPE,
+                VillageLogPagePayload.STREAM_CODEC,
+                SyntValleyNetwork::handleVillageLogPage);
+    }
+
+    private static void handleRequestVillageLog(RequestVillageLogPayload payload, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            if (context.player() instanceof ServerPlayer player) {
+                ServerRuntimeManager.find(player.getServer()).ifPresent(runtime ->
+                        runtime.villageLogPage(player.getUUID(), payload.beforeSequence())
+                                .ifPresent(page -> PacketDistributor.sendToPlayer(
+                                        player, new VillageLogPagePayload(page))));
+            }
+        });
+    }
+
+    private static void handleVillageLogPage(VillageLogPagePayload payload, IPayloadContext context) {
+        context.enqueueWork(() -> ClientLogDispatch.accept(payload.page()));
     }
 
     private static void handleProposeBuild(ProposeBuildPayload payload, IPayloadContext context) {

@@ -25,5 +25,12 @@
   "screen.syntvalley.village_overview.build": "Order shelter",
   "screen.syntvalley.village_overview.no_project": "Project: none",
   "screen.syntvalley.village_overview.project": "Project: %s",
+  "screen.syntvalley.village_overview.log": "Log",
+  "screen.syntvalley.village_log": "Village Log",
+  "screen.syntvalley.village_log.memories": "Memories",
+  "screen.syntvalley.village_log.decisions": "Decisions",
+  "screen.syntvalley.village_log.older": "Older",
+  "screen.syntvalley.village_log.back": "Back",
+  "screen.syntvalley.village_log.empty": "Empty",
   "syntvalley.configuration.startup_diagnostics": "Startup diagnostics"
 }

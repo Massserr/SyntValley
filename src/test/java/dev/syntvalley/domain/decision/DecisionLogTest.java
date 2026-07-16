@@ -60,4 +60,15 @@ class DecisionLogTest {
     void rejectsNonPositiveCap() {
         assertThrows(IllegalArgumentException.class, () -> new DecisionLog(0));
     }
+
+    @Test
+    void restoreContinuesSequencesAfterTheHighest() {
+        DecisionLog original = new DecisionLog(10);
+        add(original, 1);
+        add(original, 2);
+
+        DecisionLog restored = DecisionLog.restore(10, original.all());
+        assertEquals(2, restored.size());
+        assertEquals(3, add(restored, 3).sequence(), "sequence continues after restore, cursors stay stable");
+    }
 }

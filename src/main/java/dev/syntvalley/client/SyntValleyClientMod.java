@@ -1,9 +1,12 @@
 package dev.syntvalley.client;
 
 import dev.syntvalley.SyntValleyMod;
+import dev.syntvalley.application.query.VillageLogPage;
 import dev.syntvalley.application.query.VillageOverviewDto;
 import dev.syntvalley.client.renderer.SyntCitizenRenderer;
+import dev.syntvalley.client.screen.VillageLogScreen;
 import dev.syntvalley.client.screen.VillageOverviewScreen;
+import dev.syntvalley.network.ClientLogDispatch;
 import dev.syntvalley.network.ClientOverviewDispatch;
 import dev.syntvalley.observability.SyntValleyLog;
 import dev.syntvalley.registry.ModEntityTypes;
@@ -25,6 +28,7 @@ public final class SyntValleyClientMod {
         modContainer.registerExtensionPoint(IConfigScreenFactory.class, ConfigurationScreen::new);
         modEventBus.addListener(SyntValleyClientMod::registerRenderers);
         ClientOverviewDispatch.setHandler(SyntValleyClientMod::openOrUpdateOverview);
+        ClientLogDispatch.setHandler(SyntValleyClientMod::openOrUpdateLog);
         SyntValleyLog.logger().info("Initialized SyntValley client bootstrap");
     }
 
@@ -38,6 +42,15 @@ public final class SyntValleyClientMod {
             screen.applySnapshot(overview);
         } else {
             minecraft.setScreen(new VillageOverviewScreen(overview));
+        }
+    }
+
+    private static void openOrUpdateLog(VillageLogPage page) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof VillageLogScreen screen) {
+            screen.applyPage(page);
+        } else {
+            minecraft.setScreen(new VillageLogScreen(minecraft.screen, page));
         }
     }
 }

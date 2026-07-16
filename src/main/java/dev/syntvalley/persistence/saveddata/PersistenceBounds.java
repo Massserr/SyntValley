@@ -13,8 +13,17 @@ public final class PersistenceBounds {
     public static final int MAX_ACTIVE_PROJECTS = 16;
     public static final int MAX_FAILURE_DIAGNOSTIC_CHARACTERS = 256;
 
-    /** Upper bound on simultaneously pending dirty keys: every village, citizen and project at once. */
-    public static final int MAX_DIRTY_KEYS = MAX_VILLAGES + MAX_CITIZENS + MAX_PROJECTS;
+    /** Retention caps for Slice 9 village memory and the decision audit log. */
+    public static final int MAX_MEMORIES_PER_VILLAGE = 64;
+    public static final int MAX_PINNED_MEMORIES_PER_VILLAGE = 8;
+    public static final int MAX_DECISIONS_PER_VILLAGE = 128;
+    public static final int MAX_LOG_TEXT_CHARACTERS = 256;
+
+    /**
+     * Upper bound on simultaneously pending dirty keys: every village, citizen and project at once,
+     * plus each village's memory store and decision log.
+     */
+    public static final int MAX_DIRTY_KEYS = MAX_VILLAGES + MAX_CITIZENS + MAX_PROJECTS + 2 * MAX_VILLAGES;
 
     private PersistenceBounds() {
     }

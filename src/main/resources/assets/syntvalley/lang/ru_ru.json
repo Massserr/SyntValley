@@ -25,5 +25,12 @@
   "screen.syntvalley.village_overview.build": "Заказать навес",
   "screen.syntvalley.village_overview.no_project": "Проект: нет",
   "screen.syntvalley.village_overview.project": "Проект: %s",
+  "screen.syntvalley.village_overview.log": "Журнал",
+  "screen.syntvalley.village_log": "Журнал деревни",
+  "screen.syntvalley.village_log.memories": "Память",
+  "screen.syntvalley.village_log.decisions": "Решения",
+  "screen.syntvalley.village_log.older": "Ранее",
+  "screen.syntvalley.village_log.back": "Назад",
+  "screen.syntvalley.village_log.empty": "Пусто",
   "syntvalley.configuration.startup_diagnostics": "Диагностика при запуске"
 }

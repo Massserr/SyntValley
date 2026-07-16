@@ -9,8 +9,14 @@ import dev.syntvalley.domain.building.Rotation;
 import dev.syntvalley.domain.building.SitePlacement;
 import dev.syntvalley.domain.citizen.CitizenAggregate;
 import dev.syntvalley.domain.citizen.CitizenTransitionResult;
+import dev.syntvalley.domain.decision.DecisionKind;
+import dev.syntvalley.domain.decision.DecisionRecord;
+import dev.syntvalley.domain.decision.DecisionSource;
 import dev.syntvalley.domain.identity.CitizenId;
 import dev.syntvalley.domain.identity.VillageId;
+import dev.syntvalley.domain.memory.MemoryKind;
+import dev.syntvalley.domain.memory.MemoryRecord;
+import dev.syntvalley.domain.memory.MemorySource;
 import dev.syntvalley.domain.project.BuildProject;
 import dev.syntvalley.domain.project.ProjectId;
 import dev.syntvalley.domain.project.ProjectPauseReason;
@@ -23,6 +29,7 @@ import dev.syntvalley.persistence.saveddata.CitizenPersistentRecord;
 import dev.syntvalley.persistence.saveddata.ProjectPersistentRecord;
 import dev.syntvalley.persistence.saveddata.VillagePersistentRecord;
 import dev.syntvalley.persistence.saveddata.WorldState;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import net.minecraft.core.BlockPos;
@@ -39,6 +46,8 @@ class WorldStateCodecTest {
                 0,
                 1_783_620_000_000L,
                 0,
+                Map.of(),
+                Map.of(),
                 Map.of(),
                 Map.of(),
                 Map.of()
@@ -63,6 +72,8 @@ class WorldStateCodecTest {
                 1_783_620_000_000L,
                 350,
                 Map.of(id, VillagePersistentRecord.fromNewAggregate(village)),
+                Map.of(),
+                Map.of(),
                 Map.of(),
                 Map.of()
         );
@@ -101,6 +112,8 @@ class WorldStateCodecTest {
                         boundId, CitizenPersistentRecord.fromAggregate(bound),
                         unboundId, CitizenPersistentRecord.fromAggregate(unbound)
                 ),
+                Map.of(),
+                Map.of(),
                 Map.of()
         );
 
@@ -125,6 +138,8 @@ class WorldStateCodecTest {
                 10,
                 0,
                 Map.of(id, VillagePersistentRecord.fromNewAggregate(village)),
+                Map.of(),
+                Map.of(),
                 Map.of(),
                 Map.of()
         );
@@ -196,7 +211,9 @@ class WorldStateCodecTest {
                 350,
                 Map.of(villageId, VillagePersistentRecord.fromNewAggregate(village)),
                 Map.of(),
-                Map.of(projectId, ProjectPersistentRecord.fromAggregate(project))
+                Map.of(projectId, ProjectPersistentRecord.fromAggregate(project)),
+                Map.of(),
+                Map.of()
         );
 
         WorldState decoded = WorldStateCodec.decode(WorldStateCodec.encode(state));
@@ -206,6 +223,41 @@ class WorldStateCodecTest {
         assertEquals(ProjectPauseReason.SITE_OBSTRUCTED, restored.pauseReason().orElseThrow());
         assertEquals(1, restored.placedBlocks());
         assertEquals(Rotation.CLOCKWISE_90, restored.placement().rotation());
+    }
+
+    @Test
+    void villageMemoriesAndDecisionsRoundTrip() {
+        VillageId villageId = new VillageId(UUID.fromString("af23cb27-b660-4d5d-a677-e8f6d74eafbb"));
+        VillageAggregate village = VillageAggregate.create(
+                villageId, "Village", new CoreLocation("minecraft:overworld", 1L), 0);
+
+        MemoryRecord observed = new MemoryRecord(
+                "project:33333333", MemoryKind.PROJECT_COMPLETED, MemorySource.OBSERVED,
+                "syntvalley:small_storehouse", 700, 40L, true);
+        MemoryRecord claimed = new MemoryRecord(
+                "said:1", MemoryKind.PLAYER_HELPED, MemorySource.PLAYER_SAID, "player", 200, 50L, false);
+        DecisionRecord decision = new DecisionRecord(
+                7, DecisionKind.CITIZEN_TASK, "citizen-1", "WORK",
+                DecisionSource.DETERMINISTIC, "diligence shift", 60L);
+
+        WorldState state = new WorldState(
+                UUID.fromString("97de21a2-19bf-4e0c-b850-126ca8e5d35e"),
+                6,
+                1_783_620_000_000L,
+                350,
+                Map.of(villageId, VillagePersistentRecord.fromNewAggregate(village)),
+                Map.of(),
+                Map.of(),
+                Map.of(villageId, List.of(observed, claimed)),
+                Map.of(villageId, List.of(decision))
+        );
+
+        WorldState decoded = WorldStateCodec.decode(WorldStateCodec.encode(state));
+        assertEquals(state, decoded);
+        assertEquals(MemorySource.PLAYER_SAID, decoded.memories().get(villageId).get(1).source(),
+                "a player's claim keeps its non-fact source across the round trip");
+        assertTrue(decoded.memories().get(villageId).get(0).pinned());
+        assertEquals(7, decoded.decisions().get(villageId).get(0).sequence());
     }
 
     private static WorldState singleCitizenState() {
@@ -225,6 +277,8 @@ class WorldStateCodecTest {
                 0,
                 Map.of(villageId, VillagePersistentRecord.fromNewAggregate(village)),
                 Map.of(citizenId, CitizenPersistentRecord.fromAggregate(citizen)),
+                Map.of(),
+                Map.of(),
                 Map.of()
         );
     }

@@ -23,6 +23,24 @@ public final class DecisionLog {
         this.maxRecords = maxRecords;
     }
 
+    /**
+     * Rebuilds a log from persisted records (ascending sequence expected). The next sequence continues
+     * after the highest restored one, so cursors stay stable across restarts.
+     */
+    public static DecisionLog restore(int maxRecords, List<DecisionRecord> persisted) {
+        DecisionLog log = new DecisionLog(maxRecords);
+        long highest = 0;
+        for (DecisionRecord record : persisted) {
+            log.records.addLast(record);
+            highest = Math.max(highest, record.sequence());
+            while (log.records.size() > maxRecords) {
+                log.records.removeFirst();
+            }
+        }
+        log.nextSequence = highest + 1;
+        return log;
+    }
+
     public DecisionRecord record(
             DecisionKind kind, String subject, String chosen, DecisionSource source, String reason, long gameTime) {
         DecisionRecord entry = new DecisionRecord(nextSequence++, kind, subject, chosen, source, reason, gameTime);

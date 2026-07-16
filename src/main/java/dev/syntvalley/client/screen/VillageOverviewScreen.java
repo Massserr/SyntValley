@@ -4,6 +4,7 @@ import dev.syntvalley.application.query.VillageOverviewDto;
 import dev.syntvalley.client.cache.VillageOverviewCache;
 import dev.syntvalley.network.CloseVillageOverviewPayload;
 import dev.syntvalley.network.ProposeBuildPayload;
+import dev.syntvalley.network.RequestVillageLogPayload;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
@@ -34,7 +35,12 @@ public final class VillageOverviewScreen extends Screen {
         this.addRenderableWidget(Button.builder(
                         Component.translatable("screen.syntvalley.village_overview.build"),
                         button -> PacketDistributor.sendToServer(ProposeBuildPayload.INSTANCE))
-                .bounds(left, this.height - 32, 150, 20)
+                .bounds(left, this.height - 32, 146, 20)
+                .build());
+        this.addRenderableWidget(Button.builder(
+                        Component.translatable("screen.syntvalley.village_overview.log"),
+                        button -> PacketDistributor.sendToServer(RequestVillageLogPayload.firstPage()))
+                .bounds(left + 154, this.height - 32, 146, 20)
                 .build());
     }
 

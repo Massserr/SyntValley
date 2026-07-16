@@ -5,9 +5,15 @@ import dev.syntvalley.domain.building.Rotation;
 import dev.syntvalley.domain.building.SitePlacement;
 import dev.syntvalley.domain.citizen.CitizenConstraints;
 import dev.syntvalley.domain.citizen.CitizenLifecycle;
+import dev.syntvalley.domain.decision.DecisionKind;
+import dev.syntvalley.domain.decision.DecisionRecord;
+import dev.syntvalley.domain.decision.DecisionSource;
 import dev.syntvalley.domain.identity.CitizenId;
 import dev.syntvalley.domain.identity.TaskId;
 import dev.syntvalley.domain.identity.VillageId;
+import dev.syntvalley.domain.memory.MemoryKind;
+import dev.syntvalley.domain.memory.MemoryRecord;
+import dev.syntvalley.domain.memory.MemorySource;
 import dev.syntvalley.domain.need.NeedBounds;
 import dev.syntvalley.domain.need.Needs;
 import dev.syntvalley.domain.profession.CitizenProfession;
@@ -31,6 +37,7 @@ import dev.syntvalley.persistence.saveddata.VillagePolicyRecord;
 import dev.syntvalley.persistence.saveddata.VillagePrioritiesRecord;
 import dev.syntvalley.persistence.saveddata.WorldState;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -115,6 +122,11 @@ public final class WorldStateCodec {
             "revision"
     );
     private static final Set<String> PLACEMENT_KEYS = Set.of("dimension", "x", "y", "z", "rotation", "plan_hash");
+    private static final Set<String> VILLAGE_LOG_KEYS = Set.of("village_id", "records");
+    private static final Set<String> MEMORY_KEYS =
+            Set.of("key", "kind", "source", "subject", "salience", "created_game_time", "pinned");
+    private static final Set<String> DECISION_KEYS =
+            Set.of("sequence", "kind", "subject", "chosen", "source", "reason", "game_time");
 
     private WorldStateCodec() {
     }
@@ -154,8 +166,20 @@ public final class WorldStateCodec {
                 .map(WorldStateCodec::encodeProject)
                 .forEach(projects::add);
         root.put("projects", projects);
-        root.put("memories", new ListTag());
-        root.put("decisions", new ListTag());
+
+        ListTag memories = new ListTag();
+        state.memories().entrySet().stream()
+                .sorted((left, right) -> left.getKey().toString().compareTo(right.getKey().toString()))
+                .map(entry -> encodeVillageMemories(entry.getKey(), entry.getValue()))
+                .forEach(memories::add);
+        root.put("memories", memories);
+
+        ListTag decisions = new ListTag();
+        state.decisions().entrySet().stream()
+                .sorted((left, right) -> left.getKey().toString().compareTo(right.getKey().toString()))
+                .map(entry -> encodeVillageDecisions(entry.getKey(), entry.getValue()))
+                .forEach(decisions::add);
+        root.put("decisions", decisions);
         return root;
     }
 
@@ -217,8 +241,53 @@ public final class WorldStateCodec {
             }
         }
 
-        requireEmptyList(root, "memories", "memories");
-        requireEmptyList(root, "decisions", "decisions");
+        ListTag memoriesTag = requireCompoundList(root, "memories", "memories");
+        LinkedHashMap<VillageId, List<MemoryRecord>> memories = new LinkedHashMap<>();
+        for (int index = 0; index < memoriesTag.size(); index++) {
+            String path = "memories[" + index + "]";
+            CompoundTag entry = memoriesTag.getCompound(index);
+            requireNoUnknownKeys(entry, VILLAGE_LOG_KEYS, path);
+            if (!entry.hasUUID("village_id")) {
+                throw new PersistenceException(path + ".village_id", "missing or invalid UUID representation");
+            }
+            VillageId owner = new VillageId(entry.getUUID("village_id"));
+            ListTag recordsTag = requireCompoundList(entry, "records", path + ".records");
+            if (recordsTag.size() > PersistenceBounds.MAX_MEMORIES_PER_VILLAGE) {
+                throw new PersistenceException(path + ".records",
+                        "collection exceeds " + PersistenceBounds.MAX_MEMORIES_PER_VILLAGE);
+            }
+            List<MemoryRecord> records = new java.util.ArrayList<>(recordsTag.size());
+            for (int r = 0; r < recordsTag.size(); r++) {
+                records.add(decodeMemory(recordsTag.getCompound(r), path + ".records[" + r + "]"));
+            }
+            if (memories.putIfAbsent(owner, List.copyOf(records)) != null) {
+                throw new PersistenceException(path + ".village_id", "duplicate Village ID");
+            }
+        }
+
+        ListTag decisionsTag = requireCompoundList(root, "decisions", "decisions");
+        LinkedHashMap<VillageId, List<DecisionRecord>> decisions = new LinkedHashMap<>();
+        for (int index = 0; index < decisionsTag.size(); index++) {
+            String path = "decisions[" + index + "]";
+            CompoundTag entry = decisionsTag.getCompound(index);
+            requireNoUnknownKeys(entry, VILLAGE_LOG_KEYS, path);
+            if (!entry.hasUUID("village_id")) {
+                throw new PersistenceException(path + ".village_id", "missing or invalid UUID representation");
+            }
+            VillageId owner = new VillageId(entry.getUUID("village_id"));
+            ListTag recordsTag = requireCompoundList(entry, "records", path + ".records");
+            if (recordsTag.size() > PersistenceBounds.MAX_DECISIONS_PER_VILLAGE) {
+                throw new PersistenceException(path + ".records",
+                        "collection exceeds " + PersistenceBounds.MAX_DECISIONS_PER_VILLAGE);
+            }
+            List<DecisionRecord> records = new java.util.ArrayList<>(recordsTag.size());
+            for (int r = 0; r < recordsTag.size(); r++) {
+                records.add(decodeDecision(recordsTag.getCompound(r), path + ".records[" + r + "]"));
+            }
+            if (decisions.putIfAbsent(owner, List.copyOf(records)) != null) {
+                throw new PersistenceException(path + ".village_id", "duplicate Village ID");
+            }
+        }
 
         try {
             return new WorldState(
@@ -228,11 +297,114 @@ public final class WorldStateCodec {
                     lastFlushGameTime,
                     villages,
                     citizens,
-                    projects
+                    projects,
+                    memories,
+                    decisions
             );
         } catch (IllegalArgumentException exception) {
             throw new PersistenceException("root", exception.getMessage());
         }
+    }
+
+    private static CompoundTag encodeVillageMemories(VillageId villageId, List<MemoryRecord> records) {
+        CompoundTag tag = new CompoundTag();
+        tag.putUUID("village_id", villageId.value());
+        ListTag list = new ListTag();
+        for (MemoryRecord record : records) {
+            CompoundTag entry = new CompoundTag();
+            entry.putString("key", record.dedupeKey());
+            entry.putString("kind", record.kind().name());
+            entry.putString("source", record.source().name());
+            entry.putString("subject", record.subject());
+            entry.putInt("salience", record.salience());
+            entry.putLong("created_game_time", record.createdGameTime());
+            entry.putBoolean("pinned", record.pinned());
+            list.add(entry);
+        }
+        tag.put("records", list);
+        return tag;
+    }
+
+    private static MemoryRecord decodeMemory(CompoundTag tag, String path) {
+        requireNoUnknownKeys(tag, MEMORY_KEYS, path);
+        String key = requireBoundedString(tag, "key", path + ".key");
+        MemoryKind kind;
+        try {
+            kind = MemoryKind.valueOf(requireString(tag, "kind", path + ".kind"));
+        } catch (IllegalArgumentException exception) {
+            throw new PersistenceException(path + ".kind", "unknown memory kind");
+        }
+        MemorySource source;
+        try {
+            source = MemorySource.valueOf(requireString(tag, "source", path + ".source"));
+        } catch (IllegalArgumentException exception) {
+            throw new PersistenceException(path + ".source", "unknown memory source");
+        }
+        String subject = requireBoundedString(tag, "subject", path + ".subject");
+        int salience = requireBoundedInt(
+                tag, "salience", path + ".salience", MemoryRecord.MIN_SALIENCE, MemoryRecord.MAX_SALIENCE);
+        long created = requireNonNegativeLong(tag, "created_game_time", path + ".created_game_time");
+        if (!tag.contains("pinned", Tag.TAG_BYTE)) {
+            throw new PersistenceException(path + ".pinned", "missing or wrong NBT type");
+        }
+        try {
+            return new MemoryRecord(key, kind, source, subject, salience, created, tag.getBoolean("pinned"));
+        } catch (IllegalArgumentException exception) {
+            throw new PersistenceException(path, exception.getMessage());
+        }
+    }
+
+    private static CompoundTag encodeVillageDecisions(VillageId villageId, List<DecisionRecord> records) {
+        CompoundTag tag = new CompoundTag();
+        tag.putUUID("village_id", villageId.value());
+        ListTag list = new ListTag();
+        for (DecisionRecord record : records) {
+            CompoundTag entry = new CompoundTag();
+            entry.putLong("sequence", record.sequence());
+            entry.putString("kind", record.kind().name());
+            entry.putString("subject", record.subject());
+            entry.putString("chosen", record.chosen());
+            entry.putString("source", record.source().name());
+            entry.putString("reason", record.reason());
+            entry.putLong("game_time", record.gameTime());
+            list.add(entry);
+        }
+        tag.put("records", list);
+        return tag;
+    }
+
+    private static DecisionRecord decodeDecision(CompoundTag tag, String path) {
+        requireNoUnknownKeys(tag, DECISION_KEYS, path);
+        long sequence = requirePositiveLong(tag, "sequence", path + ".sequence");
+        DecisionKind kind;
+        try {
+            kind = DecisionKind.valueOf(requireString(tag, "kind", path + ".kind"));
+        } catch (IllegalArgumentException exception) {
+            throw new PersistenceException(path + ".kind", "unknown decision kind");
+        }
+        DecisionSource source;
+        try {
+            source = DecisionSource.valueOf(requireString(tag, "source", path + ".source"));
+        } catch (IllegalArgumentException exception) {
+            throw new PersistenceException(path + ".source", "unknown decision source");
+        }
+        String subject = requireBoundedString(tag, "subject", path + ".subject");
+        String chosen = requireBoundedString(tag, "chosen", path + ".chosen");
+        String reason = requireBoundedString(tag, "reason", path + ".reason");
+        long gameTime = requireNonNegativeLong(tag, "game_time", path + ".game_time");
+        try {
+            return new DecisionRecord(sequence, kind, subject, chosen, source, reason, gameTime);
+        } catch (IllegalArgumentException exception) {
+            throw new PersistenceException(path, exception.getMessage());
+        }
+    }
+
+    private static String requireBoundedString(CompoundTag tag, String key, String path) {
+        String value = requireString(tag, key, path);
+        if (value.length() > PersistenceBounds.MAX_LOG_TEXT_CHARACTERS) {
+            throw new PersistenceException(path, "exceeds " + PersistenceBounds.MAX_LOG_TEXT_CHARACTERS + " characters");
+        }
+        return value;
     }
 
     private static CompoundTag encodeVillage(VillagePersistentRecord village) {

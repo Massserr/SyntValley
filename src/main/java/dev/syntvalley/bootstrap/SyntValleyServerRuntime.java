@@ -8,6 +8,7 @@ import dev.syntvalley.application.port.ResourceSource;
 import dev.syntvalley.application.port.ResourceWithdrawal;
 import dev.syntvalley.application.port.VillageStateRepository;
 import dev.syntvalley.application.profession.ProfessionCatalog;
+import dev.syntvalley.application.query.VillageLogPage;
 import dev.syntvalley.application.query.VillageOverviewDto;
 import dev.syntvalley.application.query.VillageOverviewQuery;
 import dev.syntvalley.application.resource.NutritionCatalog;
@@ -28,9 +29,17 @@ import dev.syntvalley.domain.building.BuildingTemplateId;
 import dev.syntvalley.domain.citizen.CitizenAggregate;
 import dev.syntvalley.domain.citizen.CitizenEntityBinding;
 import dev.syntvalley.domain.citizen.CitizenLifecycle;
+import dev.syntvalley.domain.decision.DecisionKind;
+import dev.syntvalley.domain.decision.DecisionLog;
+import dev.syntvalley.domain.decision.DecisionRecord;
+import dev.syntvalley.domain.decision.DecisionSource;
 import dev.syntvalley.domain.identity.CitizenId;
 import dev.syntvalley.domain.identity.TaskId;
 import dev.syntvalley.domain.identity.VillageId;
+import dev.syntvalley.domain.memory.MemoryKind;
+import dev.syntvalley.domain.memory.MemoryRecord;
+import dev.syntvalley.domain.memory.MemorySource;
+import dev.syntvalley.domain.memory.MemoryStore;
 import dev.syntvalley.domain.need.NeedDecayRates;
 import dev.syntvalley.domain.need.NeedKind;
 import dev.syntvalley.domain.need.NeedUpdatePolicy;
@@ -58,10 +67,13 @@ import dev.syntvalley.persistence.dirty.PersistenceCoordinator;
 import dev.syntvalley.persistence.saveddata.PersistenceBounds;
 import dev.syntvalley.persistence.saveddata.SavedDataCitizenRepository;
 import dev.syntvalley.persistence.saveddata.SavedDataProjectRepository;
+import dev.syntvalley.persistence.saveddata.SavedDataVillageLogRepository;
 import dev.syntvalley.persistence.saveddata.SavedDataVillageRepository;
 import dev.syntvalley.persistence.saveddata.SyntValleySavedData;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -93,6 +105,15 @@ public final class SyntValleyServerRuntime {
     /** How often active build projects advance one block, in game ticks (a steady, visible pace). */
     private static final long PROJECT_TICK_INTERVAL = 10L;
 
+    /** Bounded page sizes for the read-only village log screen. */
+    private static final int MEMORY_PAGE_SIZE = 16;
+    private static final int DECISION_PAGE_SIZE = 8;
+
+    /** Salience of freshly recorded memories, on the 0..1000 scale. */
+    private static final int SALIENCE_FED = 300;
+    private static final int SALIENCE_PROJECT_COMPLETED = 700;
+    private static final int SALIENCE_DEATH = 800;
+
     private final MinecraftServer server;
     private final SyntValleySavedData savedData;
     private final VillageStateRepository villageRepository;
@@ -114,6 +135,9 @@ public final class SyntValleyServerRuntime {
     private final ProjectApplicationService projectService =
             new ProjectApplicationService(PlacementPlanner.defaults(), ProjectId::random);
     private final ProjectStateRepository projectRepository;
+    private final SavedDataVillageLogRepository villageLogRepository;
+    private final Map<VillageId, MemoryStore> memoriesByVillage = new LinkedHashMap<>();
+    private final Map<VillageId, DecisionLog> decisionsByVillage = new LinkedHashMap<>();
     private long overviewSnapshotSeq;
     private final PersistenceCoordinator persistenceCoordinator;
     private boolean acceptingCommands = true;
@@ -127,6 +151,7 @@ public final class SyntValleyServerRuntime {
         this.coreBindingService = new CoreBindingService(villageRepository, villageService);
         this.citizenRepository = new SavedDataCitizenRepository(server, savedData, dirtyTracker);
         this.projectRepository = new SavedDataProjectRepository(server, savedData, dirtyTracker);
+        this.villageLogRepository = new SavedDataVillageLogRepository(server, savedData, dirtyTracker);
         this.citizenService = new CitizenApplicationService(citizenRepository, villageRepository, CitizenId::random);
         this.citizenBindingService = new CitizenBindingService(citizenRepository);
         this.overviewQuery = new VillageOverviewQuery(villageRepository, citizenRepository);
@@ -223,7 +248,14 @@ public final class SyntValleyServerRuntime {
                     CitizenBindingService.CitizenBindingRejection.RUNTIME_STOPPING
             );
         }
-        return citizenBindingService.recordDeath(binding, entityId);
+        CitizenBindingService.DeathResult result = citizenBindingService.recordDeath(binding, entityId);
+        if (result instanceof CitizenBindingService.DeathResult.Recorded recorded && recorded.changed()) {
+            long now = server.overworld().getGameTime();
+            recordMemory(binding.villageId(), new MemoryRecord(
+                    "death:" + binding.citizenId(), MemoryKind.CITIZEN_DIED, MemorySource.OBSERVED,
+                    recorded.citizen().name(), SALIENCE_DEATH, now, false));
+        }
+        return result;
     }
 
     public Optional<CitizenAggregate> inspectCitizen(CitizenId citizenId) {
@@ -254,7 +286,25 @@ public final class SyntValleyServerRuntime {
         CitizenAggregate result = feedFromStorageIfRequested(citizen, advanced, gameTime);
         if (result != citizen) {
             citizenRepository.update(result, citizen.revision());
+            recordTaskChangeDecision(citizen, result, gameTime);
         }
+    }
+
+    /** Audits the planner's outcome whenever a citizen's activity actually changes kind. */
+    private void recordTaskChangeDecision(CitizenAggregate before, CitizenAggregate after, long gameTime) {
+        Optional<TaskKind> previousKind = before.activeTask().map(Task::kind);
+        Optional<TaskKind> nextKind = after.activeTask().map(Task::kind);
+        if (nextKind.isEmpty() || nextKind.equals(previousKind)) {
+            return;
+        }
+        TaskKind kind = nextKind.orElseThrow();
+        String reason = switch (kind) {
+            case REQUEST_FOOD -> "hunger critical";
+            case REST -> "rest low";
+            case WORK -> "shift (diligence " + after.personality().diligence() + ")";
+            case IDLE -> "idle";
+        };
+        recordDecision(after.villageId(), DecisionKind.CITIZEN_TASK, after.name(), kind.name(), reason, gameTime);
     }
 
     /**
@@ -348,6 +398,9 @@ public final class SyntValleyServerRuntime {
                 .replenish(NeedKind.HUNGER, hungerAmount);
         citizenRepository.update(
                 citizen.withSimulation(fedNeeds, citizen.activeTask(), citizen.profession()), citizen.revision());
+        recordMemory(citizen.villageId(), new MemoryRecord(
+                "fed:" + citizenId + ":" + gameTime, MemoryKind.PLAYER_FED_CITIZEN, MemorySource.OBSERVED,
+                citizen.name(), SALIENCE_FED, gameTime, false));
         return true;
     }
 
@@ -397,6 +450,90 @@ public final class SyntValleyServerRuntime {
     public void closeOverview(UUID viewer) {
         assertServerThread();
         screenSessions.close(viewer);
+    }
+
+    private MemoryStore memoriesFor(VillageId villageId) {
+        return memoriesByVillage.computeIfAbsent(villageId, villageLogRepository::loadMemories);
+    }
+
+    private DecisionLog decisionsFor(VillageId villageId) {
+        return decisionsByVillage.computeIfAbsent(villageId, villageLogRepository::loadDecisions);
+    }
+
+    /** Remembers an event once (dedupe key) and persists the bounded store. Replay never duplicates. */
+    private void recordMemory(VillageId villageId, MemoryRecord record) {
+        MemoryStore store = memoriesFor(villageId);
+        if (store.add(record)) {
+            villageLogRepository.saveMemories(villageId, store.records());
+        }
+    }
+
+    /** Appends one audited decision and persists the bounded log. */
+    private void recordDecision(
+            VillageId villageId, DecisionKind kind, String subject, String chosen, String reason, long gameTime) {
+        DecisionLog log = decisionsFor(villageId);
+        log.record(kind, subject, chosen, DecisionSource.DETERMINISTIC, reason, gameTime);
+        villageLogRepository.saveDecisions(villageId, log.all());
+    }
+
+    /**
+     * One bounded page of the read-only village log for the viewer's open overview session. Memories go
+     * out on the first page only; decisions are paginated newest-first by the sequence cursor. The
+     * village comes from the server-side session, never from the client.
+     */
+    public Optional<VillageLogPage> villageLogPage(UUID viewer, long beforeSequence) {
+        assertServerThread();
+        if (!acceptingCommands) {
+            return Optional.empty();
+        }
+        Optional<VillageId> village = screenSessions.find(Objects.requireNonNull(viewer, "viewer"))
+                .map(ScreenSessionRegistry.OverviewSession::villageId);
+        if (village.isEmpty()) {
+            return Optional.empty();
+        }
+        VillageId villageId = village.orElseThrow();
+        boolean firstPage = beforeSequence == Long.MAX_VALUE;
+
+        List<String> memoryLines = new ArrayList<>();
+        if (firstPage) {
+            List<MemoryRecord> ranked = memoriesFor(villageId).ranked();
+            for (int index = 0; index < ranked.size() && index < MEMORY_PAGE_SIZE; index++) {
+                MemoryRecord record = ranked.get(index);
+                StringBuilder line = new StringBuilder();
+                if (record.pinned()) {
+                    line.append("* ");
+                }
+                line.append(record.kind().name()).append(": ").append(record.subject());
+                if (!record.source().isObservedFact()) {
+                    line.append(" (").append(record.source().name()).append(')');
+                }
+                memoryLines.add(line.toString());
+            }
+        }
+
+        DecisionLog log = decisionsFor(villageId);
+        List<DecisionRecord> page = log.page(beforeSequence, DECISION_PAGE_SIZE);
+        List<String> decisionLines = new ArrayList<>(page.size());
+        long nextCursor = 0;
+        for (DecisionRecord record : page) {
+            decisionLines.add("#" + record.sequence() + " " + record.subject()
+                    + " -> " + record.chosen() + " — " + record.reason());
+            nextCursor = record.sequence();
+        }
+        boolean hasMore = nextCursor > 0 && !log.page(nextCursor, 1).isEmpty();
+        return Optional.of(new VillageLogPage(firstPage, memoryLines, decisionLines, nextCursor, hasMore));
+    }
+
+    /** Test-facing read of a village's remembered events (ranked). */
+    public List<MemoryRecord> villageMemories(VillageId villageId) {
+        assertServerThread();
+        return memoriesFor(Objects.requireNonNull(villageId, "villageId")).ranked();
+    }
+
+    /** Test-facing read of a village's most recent decisions. */
+    public List<DecisionRecord> villageDecisions(VillageId villageId, int limit) {
+        assertServerThread();
+        return decisionsFor(Objects.requireNonNull(villageId, "villageId")).recent(limit);
     }
 
     /**
@@ -489,6 +626,8 @@ public final class SyntValleyServerRuntime {
                 corePos.getX(), corePos.getY(), corePos.getZ(), templateId, world);
         if (result instanceof ProposeResult.Proposed proposed) {
             projectRepository.create(proposed.project());
+            recordDecision(villageId, DecisionKind.PROJECT, templateId.value(),
+                    "PROPOSED", "console order", level.getGameTime());
         }
         return result;
     }
@@ -515,6 +654,13 @@ public final class SyntValleyServerRuntime {
         BuildProject updated = projectService.advance(project, ledger, withdrawal, world);
         if (updated != project) {
             projectRepository.update(updated, project.revision());
+            if (updated.isComplete() && !project.isComplete()) {
+                recordMemory(villageId, new MemoryRecord(
+                        "project:" + projectId, MemoryKind.PROJECT_COMPLETED, MemorySource.OBSERVED,
+                        updated.templateId().value(), SALIENCE_PROJECT_COMPLETED, gameTime, false));
+                recordDecision(villageId, DecisionKind.PROJECT, updated.templateId().value(),
+                        "COMPLETED", "all blocks placed", gameTime);
+            }
         }
     }
 
