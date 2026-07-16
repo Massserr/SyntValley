@@ -23,6 +23,7 @@ public final class ServerLifecycleSubscriber {
         NeoForge.EVENT_BUS.addListener(ServerLifecycleSubscriber::onServerStopping);
         NeoForge.EVENT_BUS.addListener(ServerLifecycleSubscriber::onServerStopped);
         NeoForge.EVENT_BUS.addListener(ServerLifecycleSubscriber::onPlayerLoggedOut);
+        NeoForge.EVENT_BUS.addListener(SyntValleyCommands::onRegisterCommands);
     }
 
     private static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {

@@ -1,5 +1,12 @@
 package dev.syntvalley.bootstrap;
 
+import dev.syntvalley.ai.backend.LlmRequest;
+import dev.syntvalley.ai.backend.LlmResult;
+import dev.syntvalley.ai.ollama.OllamaConfig;
+import dev.syntvalley.ai.ollama.OllamaLlmBackend;
+import dev.syntvalley.ai.orchestration.BoundedLlmExecutor;
+import dev.syntvalley.ai.orchestration.CircuitBreaker;
+import dev.syntvalley.ai.orchestration.SubmitResult;
 import dev.syntvalley.application.building.BuildingCatalog;
 import dev.syntvalley.application.building.PlacementPlanner;
 import dev.syntvalley.application.port.CitizenStateRepository;
@@ -24,6 +31,7 @@ import dev.syntvalley.application.service.ResourceApplicationService;
 import dev.syntvalley.application.service.ScreenSessionRegistry;
 import dev.syntvalley.application.service.VillageApplicationService;
 import dev.syntvalley.application.simulation.CitizenSimulationStep;
+import dev.syntvalley.config.SyntValleyConfig;
 import dev.syntvalley.content.building.WorldPlacementAdapter;
 import dev.syntvalley.domain.building.BuildingTemplateId;
 import dev.syntvalley.domain.citizen.CitizenAggregate;
@@ -62,6 +70,7 @@ import dev.syntvalley.domain.task.TaskTransitionResult;
 import dev.syntvalley.domain.village.CoreBinding;
 import dev.syntvalley.domain.village.CoreLocation;
 import dev.syntvalley.domain.village.VillageAggregate;
+import dev.syntvalley.observability.SyntValleyLog;
 import dev.syntvalley.persistence.dirty.DirtyTracker;
 import dev.syntvalley.persistence.dirty.PersistenceCoordinator;
 import dev.syntvalley.persistence.saveddata.PersistenceBounds;
@@ -114,6 +123,14 @@ public final class SyntValleyServerRuntime {
     private static final int SALIENCE_PROJECT_COMPLETED = 700;
     private static final int SALIENCE_DEATH = 800;
 
+    /** LLM boundary constants: one local worker, small bounded inbox, per-tick drain cap. */
+    private static final int AI_WORKER_COUNT = 1;
+    private static final int AI_INBOX_CAPACITY = 16;
+    private static final int AI_DRAIN_PER_TICK = 4;
+    private static final int AI_CIRCUIT_FAILURES = 3;
+    private static final long AI_CIRCUIT_COOLDOWN_MILLIS = 30_000L;
+    private static final int AI_MAX_RESPONSE_CHARS = 65_536;
+
     private final MinecraftServer server;
     private final SyntValleySavedData savedData;
     private final VillageStateRepository villageRepository;
@@ -140,6 +157,9 @@ public final class SyntValleyServerRuntime {
     private final Map<VillageId, DecisionLog> decisionsByVillage = new LinkedHashMap<>();
     private long overviewSnapshotSeq;
     private final PersistenceCoordinator persistenceCoordinator;
+    private final BoundedLlmExecutor llmExecutor;
+    private final String llmBackendName;
+    private String lastAiDiagnostic = "none";
     private boolean acceptingCommands = true;
 
     public SyntValleyServerRuntime(MinecraftServer server) {
@@ -156,6 +176,32 @@ public final class SyntValleyServerRuntime {
         this.citizenBindingService = new CitizenBindingService(citizenRepository);
         this.overviewQuery = new VillageOverviewQuery(villageRepository, citizenRepository);
         this.persistenceCoordinator = new PersistenceCoordinator(savedData, dirtyTracker);
+
+        BoundedLlmExecutor executor = null;
+        String backendName = "disabled";
+        try {
+            if (SyntValleyConfig.AI_ENABLED.get()) {
+                OllamaConfig aiConfig = new OllamaConfig(
+                        SyntValleyConfig.AI_BASE_URL.get(),
+                        SyntValleyConfig.AI_MODEL.get(),
+                        SyntValleyConfig.AI_CONNECT_TIMEOUT_MILLIS.get(),
+                        SyntValleyConfig.AI_REQUEST_TIMEOUT_MILLIS.get(),
+                        AI_MAX_RESPONSE_CHARS);
+                OllamaLlmBackend backend = new OllamaLlmBackend(aiConfig);
+                backendName = backend.name();
+                executor = new BoundedLlmExecutor(
+                        backend, AI_WORKER_COUNT, SyntValleyConfig.AI_QUEUE_CAPACITY.get(), AI_INBOX_CAPACITY,
+                        new CircuitBreaker(AI_CIRCUIT_FAILURES, AI_CIRCUIT_COOLDOWN_MILLIS),
+                        System::currentTimeMillis);
+            }
+        } catch (IllegalArgumentException | IllegalStateException badConfig) {
+            // Bad AI config (or config not loaded) must never stop the server — run deterministically.
+            SyntValleyLog.logger().error("SyntValley AI disabled by invalid configuration: {}", badConfig.getMessage());
+            executor = null;
+            backendName = "disabled (invalid config)";
+        }
+        this.llmExecutor = executor;
+        this.llmBackendName = backendName;
     }
 
     public boolean isPersistenceAvailable() {
@@ -693,6 +739,49 @@ public final class SyntValleyServerRuntime {
                 advanceActiveProjects(gameTime);
             }
         }
+        if (acceptingCommands && llmExecutor != null) {
+            // Diagnostic-only in Slice 10: completions surface as status, never as world actions.
+            for (LlmResult result : llmExecutor.drainCompleted(AI_DRAIN_PER_TICK)) {
+                lastAiDiagnostic = describeAiResult(result);
+                SyntValleyLog.logger().info("SyntValley AI diagnostic: {}", lastAiDiagnostic);
+            }
+        }
+    }
+
+    /** Status/metrics text only — the response body itself is size-noted, never logged. */
+    private static String describeAiResult(LlmResult result) {
+        return switch (result) {
+            case LlmResult.Success success -> "ok in " + success.response().durationMillis()
+                    + "ms, " + success.response().content().length() + " chars";
+            case LlmResult.Failure failure -> "failed " + failure.kind() + " (" + failure.diagnostic() + ")";
+        };
+    }
+
+    /** One-line health of the LLM boundary for the debug command. */
+    public String aiStatus() {
+        assertServerThread();
+        if (llmExecutor == null) {
+            return "backend=" + llmBackendName;
+        }
+        return "backend=" + llmBackendName
+                + " circuit=" + llmExecutor.circuitState()
+                + " queued=" + llmExecutor.queuedCount()
+                + " completed=" + llmExecutor.completedCount()
+                + " dropped=" + llmExecutor.droppedCount()
+                + " last=" + lastAiDiagnostic;
+    }
+
+    /** Submits a safe diagnostic generation; the reply surfaces via {@link #aiStatus()} once drained. */
+    public String aiPing() {
+        assertServerThread();
+        if (llmExecutor == null || !acceptingCommands) {
+            return "backend=" + llmBackendName;
+        }
+        SubmitResult result = llmExecutor.submit(LlmRequest.of("diagnostic", "Reply with a single word: pong"));
+        return switch (result) {
+            case SubmitResult.Accepted accepted -> "submitted " + accepted.requestId();
+            case SubmitResult.Rejected rejected -> "rejected: " + rejected.reason();
+        };
     }
 
     public void onPostWorldSave(long gameTime) {
@@ -703,6 +792,9 @@ public final class SyntValleyServerRuntime {
     public void stop(long gameTime) {
         assertServerThread();
         acceptingCommands = false;
+        if (llmExecutor != null) {
+            llmExecutor.shutdown(); // late completions are generation-dropped, never enter a stopped server
+        }
         if (savedData.isAvailable()) {
             persistenceCoordinator.flushAll(gameTime);
         }
