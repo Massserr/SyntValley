@@ -249,7 +249,8 @@ public final class SyntValleyServerRuntime {
         CitizenAggregate citizen = current.orElseThrow();
         Optional<ProfessionDefinition> definition =
                 citizen.profession().flatMap(active -> professions.get(active.professionId()));
-        CitizenAggregate advanced = simulationStep.advance(citizen, gameTime, TaskId::random, definition);
+        CitizenAggregate advanced =
+                simulationStep.advance(citizen, gameTime, TaskId::random, definition, citizen.personality());
         CitizenAggregate result = feedFromStorageIfRequested(citizen, advanced, gameTime);
         if (result != citizen) {
             citizenRepository.update(result, citizen.revision());

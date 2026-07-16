@@ -3,6 +3,7 @@ package dev.syntvalley.domain.citizen;
 import dev.syntvalley.domain.identity.CitizenId;
 import dev.syntvalley.domain.identity.VillageId;
 import dev.syntvalley.domain.need.Needs;
+import dev.syntvalley.domain.personality.Personality;
 import dev.syntvalley.domain.profession.CitizenProfession;
 import dev.syntvalley.domain.task.Task;
 import java.util.Objects;
@@ -77,6 +78,11 @@ public record CitizenAggregate(
 
     public CitizenEntityBinding entityBinding() {
         return new CitizenEntityBinding(id, villageId, bindingGeneration);
+    }
+
+    /** Deterministic, stable personality derived from the citizen's identity; it never changes. */
+    public Personality personality() {
+        return Personality.fromSeed(id.value().getMostSignificantBits() ^ id.value().getLeastSignificantBits());
     }
 
     /** Applies a serviced simulation step (updated needs, active task and profession progress). */

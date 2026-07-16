@@ -8,6 +8,9 @@ import dev.syntvalley.domain.need.NeedDecayRates;
 import dev.syntvalley.domain.need.NeedKind;
 import dev.syntvalley.domain.need.NeedUpdatePolicy;
 import dev.syntvalley.domain.need.Needs;
+import dev.syntvalley.domain.personality.Mood;
+import dev.syntvalley.domain.personality.Personality;
+import dev.syntvalley.domain.personality.PersonalityPolicy;
 import dev.syntvalley.domain.profession.CitizenProfession;
 import dev.syntvalley.domain.profession.ProfessionDefinition;
 import dev.syntvalley.domain.task.Task;
@@ -26,8 +29,11 @@ public final class CitizenSimulationStep {
     private static final int WORK_SHIFT_TICKS = 200;
     private static final int WORK_COOLDOWN_TICKS = 100;
     private static final int WORK_EXPERIENCE_PER_SHIFT = 25;
+    /** Minimum soft work score for a calm, work-capable citizen to take a shift rather than idle. */
+    private static final int WORK_SCORE_THRESHOLD = 20;
 
     private final TaskPlanner planner = new TaskPlanner();
+    private final PersonalityPolicy personalityPolicy = new PersonalityPolicy();
     private final NeedDecayRates decayRates;
     private final int restRecoveryPerStep;
 
@@ -43,10 +49,12 @@ public final class CitizenSimulationStep {
             CitizenAggregate citizen,
             long now,
             Supplier<TaskId> taskIdFactory,
-            Optional<ProfessionDefinition> definition) {
+            Optional<ProfessionDefinition> definition,
+            Personality personality) {
         Objects.requireNonNull(citizen, "citizen");
         Objects.requireNonNull(taskIdFactory, "taskIdFactory");
         Objects.requireNonNull(definition, "definition");
+        Objects.requireNonNull(personality, "personality");
 
         Needs decayed = NeedUpdatePolicy.advance(citizen.needs(), now, decayRates);
         Optional<Task> current = citizen.activeTask().filter(task -> !task.state().isTerminal());
@@ -76,7 +84,13 @@ public final class CitizenSimulationStep {
                     && now - current.orElseThrow().createdGameTime() < WORK_COOLDOWN_TICKS) {
                 nextTask = current;
             } else {
-                nextTask = Optional.of(Task.create(taskIdFactory.get(), citizen.id(), TaskKind.WORK, now));
+                // Soft choice: a diligent citizen takes a shift; a less diligent one idles instead. Only
+                // ever reached when no need is critical, so personality never overrides safety.
+                Mood mood = Mood.fromNeeds(afterEffect.hunger(), afterEffect.rest());
+                TaskKind softChoice = personalityPolicy.workScore(personality, mood) >= WORK_SCORE_THRESHOLD
+                        ? TaskKind.WORK
+                        : TaskKind.IDLE;
+                nextTask = Optional.of(Task.create(taskIdFactory.get(), citizen.id(), softChoice, now));
             }
         } else {
             TaskDecision decision = planner.plan(runningKind, afterEffect);
