@@ -1,8 +1,5 @@
 package dev.syntvalley.ai.ollama;
 
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParseException;
-import com.google.gson.JsonParser;
 import dev.syntvalley.ai.backend.LlmBackend;
 import dev.syntvalley.ai.backend.LlmErrorKind;
 import dev.syntvalley.ai.backend.LlmRequest;
@@ -24,6 +21,7 @@ import java.util.OptionalLong;
  * runs only on the executor's worker threads. Every failure is classified into a typed result — the
  * adapter never throws — and diagnostics stay short and prompt-free so nothing sensitive reaches logs.
  * The response envelope is size-capped via Content-Length when present and re-checked after reading.
+ * JSON is built and parsed by {@link OllamaEnvelope}, so the mod carries no JSON-library dependency.
  */
 public final class OllamaLlmBackend implements LlmBackend {
     private final OllamaConfig config;
@@ -41,16 +39,15 @@ public final class OllamaLlmBackend implements LlmBackend {
         Objects.requireNonNull(request, "request");
         long startedAt = System.currentTimeMillis();
 
-        JsonObject body = new JsonObject();
-        body.addProperty("model", config.model());
-        body.addProperty("prompt", request.prompt());
-        body.addProperty("stream", false);
+        String body = "{\"model\":" + OllamaEnvelope.quote(config.model())
+                + ",\"prompt\":" + OllamaEnvelope.quote(request.prompt())
+                + ",\"stream\":false}";
 
         HttpRequest httpRequest = HttpRequest.newBuilder()
                 .uri(URI.create(config.baseUrl() + "/api/generate"))
                 .timeout(Duration.ofMillis(config.requestTimeoutMillis()))
                 .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build();
 
         HttpResponse<String> response;
@@ -80,23 +77,20 @@ public final class OllamaLlmBackend implements LlmBackend {
             return failure(request, LlmErrorKind.RESPONSE_TOO_LARGE, "body chars " + payload.length());
         }
 
+        OllamaEnvelope envelope;
         try {
-            JsonObject envelope = JsonParser.parseString(payload).getAsJsonObject();
-            if (!envelope.has("done") || !envelope.get("done").getAsBoolean()) {
-                return failure(request, LlmErrorKind.MALFORMED_RESPONSE, "missing or false done flag");
-            }
-            if (!envelope.has("response") || !envelope.get("response").isJsonPrimitive()) {
-                return failure(request, LlmErrorKind.MALFORMED_RESPONSE, "missing response field");
-            }
-            String content = envelope.get("response").getAsString();
-            if (content.length() > LlmResponse.MAX_CONTENT_CHARS) {
-                return failure(request, LlmErrorKind.RESPONSE_TOO_LARGE, "response chars " + content.length());
-            }
-            return new LlmResult.Success(
-                    new LlmResponse(request.id(), content, System.currentTimeMillis() - startedAt));
-        } catch (JsonParseException | IllegalStateException | UnsupportedOperationException malformed) {
+            envelope = OllamaEnvelope.parse(payload);
+        } catch (RuntimeException malformed) {
             return failure(request, LlmErrorKind.MALFORMED_RESPONSE, malformed.getClass().getSimpleName());
         }
+        if (!envelope.done()) {
+            return failure(request, LlmErrorKind.MALFORMED_RESPONSE, "done flag is false");
+        }
+        String content = envelope.response();
+        if (content.length() > LlmResponse.MAX_CONTENT_CHARS) {
+            return failure(request, LlmErrorKind.RESPONSE_TOO_LARGE, "response chars " + content.length());
+        }
+        return new LlmResult.Success(new LlmResponse(request.id(), content, System.currentTimeMillis() - startedAt));
     }
 
     @Override

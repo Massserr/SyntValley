@@ -37,6 +37,7 @@ class OllamaLlmBackendTest {
                 Thread.currentThread().interrupt();
             }
             byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
             exchange.sendResponseHeaders(status, bytes.length);
             try (OutputStream out = exchange.getResponseBody()) {
                 out.write(bytes);
